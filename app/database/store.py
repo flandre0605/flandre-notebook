@@ -161,6 +161,16 @@ def question_filter_options() -> tuple[list[str], list[str]]:
         return [row[0] for row in subjects], [row[0] for row in types]
 
 
+def question_summary() -> tuple[int, int, int]:
+    with _connection() as connection:
+        row = connection.execute(
+            """SELECT COUNT(*), COALESCE(SUM(is_wrong), 0),
+                      (SELECT COUNT(*) FROM review_state WHERE due_at <= CURRENT_TIMESTAMP)
+               FROM questions"""
+        ).fetchone()
+        return tuple(row)
+
+
 def get_question(question_id: int) -> sqlite3.Row | None:
     with _connection() as connection:
         return connection.execute(
