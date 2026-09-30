@@ -237,6 +237,28 @@ def test_profile(profile) -> str:
     )
 
 
+def _parse_recognition_json(content: str) -> dict:
+    candidate = content.strip().lstrip("\ufeff")
+    try:
+        payload = json.loads(candidate)
+        if isinstance(payload, dict):
+            return payload
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for start, character in enumerate(candidate):
+        if character != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(candidate, start)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("stem"), str):
+            return payload
+    raise json.JSONDecodeError("No valid recognition object", candidate, 0)
+
+
 def recognize_image(profile, image_path: str | Path) -> dict[str, str]:
     image_path = Path(image_path)
     mime_type = mimetypes.guess_type(image_path.name)[0] or "image/png"
@@ -260,11 +282,8 @@ def recognize_image(profile, image_path: str | Path) -> dict[str, str]:
         if not error.retry_without_json_mode:
             raise
         content = _request(profile, messages, json_mode=False)
-    candidate = content.strip()
-    if candidate.startswith("```"):
-        candidate = candidate.split("\n", 1)[-1].removesuffix("```").strip()
     try:
-        draft = json.loads(candidate)
+        draft = _parse_recognition_json(content)
     except json.JSONDecodeError:
         raise ProviderError("模型返回内容不是有效 JSON，原始响应已保留。", content) from None
     if not isinstance(draft, dict) or not isinstance(draft.get("stem"), str):
