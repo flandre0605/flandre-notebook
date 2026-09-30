@@ -237,29 +237,29 @@ def test_profile(profile) -> str:
     )
 
 
-def _parse_recognition_json(content: str) -> dict:
+def _parse_recognition_json(content: str) -> dict | list:
     candidate = content.strip().lstrip("\ufeff")
     try:
         payload = json.loads(candidate)
-        if isinstance(payload, dict):
+        if isinstance(payload, (dict, list)):
             return payload
     except json.JSONDecodeError:
         pass
 
     decoder = json.JSONDecoder()
     for start, character in enumerate(candidate):
-        if character != "{":
+        if character not in "[{":
             continue
         try:
             payload, _ = decoder.raw_decode(candidate, start)
         except json.JSONDecodeError:
             continue
-        if isinstance(payload, dict) and isinstance(payload.get("stem"), str):
+        if isinstance(payload, (dict, list)):
             return payload
     raise json.JSONDecodeError("No valid recognition object", candidate, 0)
 
 
-def recognize_image(profile, image_path: str | Path) -> dict[str, str]:
+def recognize_image(profile, image_path: str | Path) -> list[dict[str, str]]:
     image_path = Path(image_path)
     mime_type = mimetypes.guess_type(image_path.name)[0] or "image/png"
     encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
@@ -286,7 +286,24 @@ def recognize_image(profile, image_path: str | Path) -> dict[str, str]:
         draft = _parse_recognition_json(content)
     except json.JSONDecodeError:
         raise ProviderError("模型返回内容不是有效 JSON，原始响应已保留。", content) from None
-    if not isinstance(draft, dict) or not isinstance(draft.get("stem"), str):
-        raise ProviderError("模型响应缺少题干字段，原始响应已保留。", content)
+    if isinstance(draft, dict) and isinstance(draft.get("questions"), list):
+        questions = draft["questions"]
+    elif isinstance(draft, dict) and isinstance(draft.get("stem"), str):
+        questions = [draft]
+    elif isinstance(draft, list):
+        questions = draft
+    else:
+        raise ProviderError("模型响应没有包含题目列表，原始响应已保留。", content)
+    if not questions or any(
+        not isinstance(question, dict) or not isinstance(question.get("stem"), str)
+        for question in questions
+    ):
+        raise ProviderError("模型响应中的题目缺少题干字段，原始响应已保留。", content)
     fields = ("stem", "subject", "question_type", "answer", "explanation")
-    return {field: draft.get(field, "") if isinstance(draft.get(field, ""), str) else "" for field in fields}
+    return [
+        {
+            field: question.get(field, "") if isinstance(question.get(field, ""), str) else ""
+            for field in fields
+        }
+        for question in questions
+    ]

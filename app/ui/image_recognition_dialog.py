@@ -187,16 +187,26 @@ class ImageRecognitionDialog(QDialog):
         editor = RecognitionDraftDialog(None, self.image_path, draft, self)
         if editor.exec() != QDialog.DialogCode.Accepted:
             return
-        question_id = None
+        question_ids = []
         try:
-            question_id = store.save_question(editor.values())
-            attachments.import_image(question_id, self.image_path)
+            for values in editor.values():
+                question_id = store.save_question(values)
+                question_ids.append(question_id)
+                # ponytail: copy the source image per question; share attachment storage if duplication becomes material.
+                attachments.import_image(question_id, self.image_path)
         except Exception as error:
-            if question_id is not None:
-                store.delete_question(question_id)
-            QMessageBox.critical(self, "收录失败", f"题目或原图没有保存：\n{error}")
+            cleanup_errors = []
+            for question_id in question_ids:
+                try:
+                    cleanup_errors.extend(attachments.delete_question_images(question_id))
+                except Exception as cleanup_error:
+                    cleanup_errors.append(str(cleanup_error))
+            detail = f"\n清理失败：{'；'.join(cleanup_errors)}" if cleanup_errors else ""
+            QMessageBox.critical(self, "收录失败", f"题目或原图没有保存：\n{error}{detail}")
             return
-        QMessageBox.information(self, "收录完成", "识别结果和原图已保存到题库。")
+        QMessageBox.information(
+            self, "收录完成", f"已收录 {len(question_ids)} 道题，原图已保存为题目附件。"
+        )
         self.accept()
 
     def _failed(self, error):
