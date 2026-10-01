@@ -48,7 +48,10 @@ class RecognitionDraftDialog(QDialog):
         content.addWidget(self.image, 1)
         content.addLayout(form, 2)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        self.buttons.button(QDialogButtonBox.StandardButton.Save).setText(
+        save_button = self.buttons.button(QDialogButtonBox.StandardButton.Save)
+        save_button.setObjectName("primaryButton")
+        save_button.setMinimumHeight(38)
+        save_button.setText(
             "确认并更新题目" if question is not None else f"确认并收录 {len(self.drafts)} 道题"
         )
         self.buttons.accepted.connect(self._accept_if_valid)
@@ -61,13 +64,19 @@ class RecognitionDraftDialog(QDialog):
         )
         review_row = QHBoxLayout()
         self.instruction_label = QLabel(instruction)
+        self.progress_label = QLabel()
+        self.progress_label.setStyleSheet(
+            "background:#edf2ff;color:#365dcc;border-radius:10px;padding:5px 10px;font-weight:600;"
+        )
         review_row.addWidget(self.instruction_label, 1)
+        review_row.addWidget(self.progress_label)
         review_row.addWidget(self.question_selector)
         review_row.addWidget(self.remove_draft_button)
         layout.addLayout(review_row)
         layout.addLayout(content, 1)
         layout.addWidget(self.buttons)
         self._load_draft(0)
+        self._update_progress()
         self.question_selector.currentIndexChanged.connect(self._switch_draft)
 
     def _load_draft(self, index):
@@ -91,6 +100,10 @@ class RecognitionDraftDialog(QDialog):
         self._save_current()
         self.current_index = index
         self._load_draft(index)
+        self._update_progress()
+
+    def _update_progress(self):
+        self.progress_label.setText(f"题目 {self.current_index + 1} / {len(self.drafts)}")
 
     def _remove_current_draft(self):
         if len(self.drafts) <= 1:
@@ -107,6 +120,7 @@ class RecognitionDraftDialog(QDialog):
         self.question_selector.blockSignals(False)
         self.current_index = selected
         self._load_draft(selected)
+        self._update_progress()
         self.question_selector.setVisible(len(self.drafts) > 1)
         self.remove_draft_button.setVisible(len(self.drafts) > 1)
         self.instruction_label.setText(

@@ -5,7 +5,7 @@ from PySide6.QtCore import QThreadPool, Qt, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QVBoxLayout,
+    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from app.database import store
@@ -25,11 +25,31 @@ class ImageDropZone(QFrame):
         self.setStyleSheet(
             "QFrame{background:#fff;border:2px dashed #cbd5e3;border-radius:14px;}"
         )
-        self.label = QLabel("把题目图片拖到这里\n支持 PNG、JPG、WEBP")
-        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.label.setStyleSheet("border:0;color:#7b8799;font-size:15px;padding:24px;")
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.placeholder = QWidget()
+        placeholder_layout = QVBoxLayout(self.placeholder)
+        placeholder_layout.setContentsMargins(24, 24, 24, 24)
+        placeholder_layout.setSpacing(8)
+        icon = QLabel("▧")
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon.setStyleSheet("border:0;color:#7890c7;font-size:34px;")
+        title = QLabel("把题目图片拖到这里")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("border:0;color:#34435c;font-size:16px;font-weight:700;")
+        hint = QLabel("支持 PNG、JPG、WEBP · 也可以粘贴剪贴板图片")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setStyleSheet("border:0;color:#8a96a8;font-size:12px;")
+        placeholder_layout.addStretch()
+        placeholder_layout.addWidget(icon)
+        placeholder_layout.addWidget(title)
+        placeholder_layout.addWidget(hint)
+        placeholder_layout.addStretch()
+        self.preview_stack = QStackedWidget()
+        self.preview_stack.addWidget(self.placeholder)
+        self.preview_stack.addWidget(self.preview)
         layout = QVBoxLayout(self)
-        layout.addWidget(self.label)
+        layout.addWidget(self.preview_stack)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -54,9 +74,10 @@ class ImageDropZone(QFrame):
     def set_image(self, path: Path):
         pixmap = QPixmap(str(path))
         if pixmap.isNull():
-            self.label.setText(path.name)
+            self.preview.setText(path.name)
+            self.preview_stack.setCurrentWidget(self.preview)
             return
-        self.label.setPixmap(
+        self.preview.setPixmap(
             pixmap.scaled(
                 600,
                 440,
@@ -64,12 +85,14 @@ class ImageDropZone(QFrame):
                 Qt.TransformationMode.SmoothTransformation,
             )
         )
-        self.label.setToolTip(str(path))
+        self.preview_stack.setCurrentWidget(self.preview)
+        self.preview.setToolTip(str(path))
 
     def clear_image(self):
-        self.label.setPixmap(QPixmap())
-        self.label.setText("把题目图片拖到这里\n支持 PNG、JPG、WEBP")
-        self.label.setToolTip("")
+        self.preview.setPixmap(QPixmap())
+        self.preview.setText("")
+        self.preview.setToolTip("")
+        self.preview_stack.setCurrentWidget(self.placeholder)
 
 
 class ImageRecognitionDialog(QDialog):
@@ -98,6 +121,10 @@ class ImageRecognitionDialog(QDialog):
         self.recognize_button.clicked.connect(self.recognize)
         self.status = QLabel("选择或拖入题目图片，再选择视觉模型。")
         self.status.setStyleSheet("color:#7b8799;font-size:12px;")
+        heading = QLabel("整理纸上的错题")
+        heading.setStyleSheet("color:#17243a;font-size:22px;font-weight:700;")
+        subtitle = QLabel("导入题目图片，AI 会按题目拆分并生成可编辑草稿。")
+        subtitle.setStyleSheet("color:#8490a3;font-size:12px;")
         actions = QHBoxLayout()
         actions.addWidget(self.profile, 1)
         actions.addWidget(self.paste_button)
@@ -106,6 +133,8 @@ class ImageRecognitionDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(14)
+        layout.addWidget(heading)
+        layout.addWidget(subtitle)
         layout.addWidget(self.drop_zone, 1)
         layout.addWidget(self.status)
         layout.addLayout(actions)

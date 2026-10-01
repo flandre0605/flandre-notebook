@@ -55,6 +55,7 @@ QLineEdit, QPlainTextEdit, QComboBox {
     background: #ffffff; border: 1px solid #dfe5ee; border-radius: 8px;
     padding: 8px 10px; color: #273449; selection-background-color: #dce7ff;
 }
+QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover { border-color: #c8d2e1; }
 QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus { border: 1px solid #809bea; }
 QComboBox { min-height: 22px; }
 QComboBox::drop-down { border: 0; width: 25px; }
@@ -85,9 +86,12 @@ QHeaderView::section {
     border-bottom: 1px solid #e9edf3; padding: 11px 12px; font-weight: 600;
 }
 QTableWidget::item { padding-left: 10px; border: none; }
-QStatusBar { background: transparent; color: #8a95a5; font-size: 11px; }
+QTableWidget::item:hover { background: #f7f9fd; }
+QTableWidget::item:selected { background: #edf2ff; color: #233d78; }
+QStatusBar { background: transparent; color: #8a95a5; font-size: 11px; padding: 3px 10px; }
 QDialogButtonBox QPushButton { min-width: 82px; }
 QCheckBox { color: #46536a; spacing: 8px; }
+QToolTip { color: #f8faff; background: #26344b; border: 0; padding: 6px 8px; }
 """
 
 
