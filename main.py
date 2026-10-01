@@ -11,6 +11,7 @@ from app.ui.main_window import MainWindow
 def main() -> int:
     initialize()
     app = QApplication(sys.argv)
+    app.setOrganizationName("FlandreNotebook")
     app.setApplicationName("AI 错题本")
     app.setFont(QFont("Microsoft YaHei UI", 10))
     icon_path = Path(__file__).resolve().parent / "assets" / "app_icon.ico"

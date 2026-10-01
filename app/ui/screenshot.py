@@ -96,14 +96,16 @@ class GlobalScreenshotHotkey(QAbstractNativeEventFilter):
     MOD_NOREPEAT = 0x4000
     WM_HOTKEY = 0x0312
 
-    def __init__(self, window, callback):
+    def __init__(self, window, callback, shortcut="Ctrl+Alt+S"):
         super().__init__()
         self.window = window
         self.callback = callback
+        self.shortcut = QKeySequence(shortcut)
         self.app = QApplication.instance()
         self.user32 = None
         self.registered = False
         self.fallback = None
+        self.native_modifiers, self.native_key = self._native_combination(self.shortcut)
         if sys.platform == "win32":
             self.user32 = ctypes.WinDLL("user32", use_last_error=True)
             self.user32.RegisterHotKey.argtypes = (
@@ -112,20 +114,63 @@ class GlobalScreenshotHotkey(QAbstractNativeEventFilter):
             self.user32.RegisterHotKey.restype = wintypes.BOOL
             self.user32.UnregisterHotKey.argtypes = (wintypes.HWND, wintypes.INT)
             self.user32.UnregisterHotKey.restype = wintypes.BOOL
-            self.registered = bool(
-                self.user32.RegisterHotKey(
+            if self.native_key is not None:
+                self.registered = bool(self.user32.RegisterHotKey(
                     wintypes.HWND(int(window.winId())),
                     self.HOTKEY_ID,
-                    self.MOD_CONTROL | self.MOD_ALT | self.MOD_NOREPEAT,
-                    ord("S"),
-                )
-            )
+                    self.native_modifiers | self.MOD_NOREPEAT,
+                    self.native_key,
+                ))
             if self.registered:
                 self.app.installNativeEventFilter(self)
         if not self.registered:
-            self.fallback = QShortcut(QKeySequence("Ctrl+Alt+S"), window)
-            self.fallback.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            self.fallback.activated.connect(callback)
+            if not self.shortcut.isEmpty():
+                self.fallback = QShortcut(self.shortcut, window)
+                self.fallback.setContext(Qt.ShortcutContext.ApplicationShortcut)
+                self.fallback.activated.connect(callback)
+
+    @staticmethod
+    def _native_combination(sequence):
+        if sequence.count() != 1:
+            return 0, None
+        combination = sequence[0]
+        modifiers = combination.keyboardModifiers()
+        native_modifiers = 0
+        for qt_modifier, win_modifier in (
+            (Qt.KeyboardModifier.ControlModifier, GlobalScreenshotHotkey.MOD_CONTROL),
+            (Qt.KeyboardModifier.AltModifier, GlobalScreenshotHotkey.MOD_ALT),
+            (Qt.KeyboardModifier.ShiftModifier, 0x0004),
+            (Qt.KeyboardModifier.MetaModifier, 0x0008),
+        ):
+            if modifiers & qt_modifier:
+                native_modifiers |= win_modifier
+        if not native_modifiers:
+            return 0, None
+
+        key = int(combination.key())
+        if 0x30 <= key <= 0x39 or 0x41 <= key <= 0x5A:
+            return native_modifiers, key
+        if int(Qt.Key.Key_F1) <= key <= int(Qt.Key.Key_F24):
+            return native_modifiers, 0x70 + key - int(Qt.Key.Key_F1)
+        special_keys = {
+            int(Qt.Key.Key_Space): 0x20,
+            int(Qt.Key.Key_Tab): 0x09,
+            int(Qt.Key.Key_Return): 0x0D,
+            int(Qt.Key.Key_Enter): 0x0D,
+            int(Qt.Key.Key_Escape): 0x1B,
+            int(Qt.Key.Key_Backspace): 0x08,
+            int(Qt.Key.Key_Delete): 0x2E,
+            int(Qt.Key.Key_Insert): 0x2D,
+            int(Qt.Key.Key_Home): 0x24,
+            int(Qt.Key.Key_End): 0x23,
+            int(Qt.Key.Key_PageUp): 0x21,
+            int(Qt.Key.Key_PageDown): 0x22,
+            int(Qt.Key.Key_Left): 0x25,
+            int(Qt.Key.Key_Up): 0x26,
+            int(Qt.Key.Key_Right): 0x27,
+            int(Qt.Key.Key_Down): 0x28,
+        }
+        return native_modifiers, special_keys.get(key)
 
     def nativeEventFilter(self, event_type, message):
         if bytes(event_type) == b"windows_generic_MSG":
@@ -144,3 +189,7 @@ class GlobalScreenshotHotkey(QAbstractNativeEventFilter):
                 wintypes.HWND(int(self.window.winId())), self.HOTKEY_ID
             )
             self.registered = False
+        if self.fallback is not None:
+            self.fallback.setEnabled(False)
+            self.fallback.deleteLater()
+            self.fallback = None

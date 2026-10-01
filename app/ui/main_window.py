@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 import zipfile
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -220,8 +220,6 @@ class MainWindow(QMainWindow):
 
         add_nav("▦  我的题库", self.refresh, active=True)
         add_nav("✦  AI 识题", self.recognize_selected)
-        screenshot_button = add_nav("▣  截图识题", self.capture_screenshot)
-        screenshot_button.setToolTip("全局快捷键：Ctrl+Alt+S")
         add_nav("▶  开始练习", self.start_practice)
         add_nav("◷  练习记录", self.show_history)
         sidebar_layout.addSpacing(18)
@@ -233,7 +231,7 @@ class MainWindow(QMainWindow):
         section_label = QLabel("管理")
         section_label.setStyleSheet("color:#9aa5b5;font-size:11px;padding:0 10px 5px;")
         sidebar_layout.addWidget(section_label)
-        add_nav("⚙  模型服务", self.manage_profiles, utility=True)
+        add_nav("⚙  设置与模型服务", self.manage_profiles, utility=True)
         add_nav("↓  备份数据", self.create_backup, utility=True)
         add_nav("↻  恢复备份", self.restore_backup, utility=True)
         sidebar_layout.addStretch()
@@ -438,14 +436,18 @@ class MainWindow(QMainWindow):
         layout.addLayout(list_section, 1)
         shell.addWidget(page, 1)
         self.setCentralWidget(central)
-        self.statusBar().showMessage("本地模式 · 题库数据保存在此设备    |    Ctrl+Alt+S 截图识题")
+        self.statusBar().showMessage("本地模式 · 题库数据保存在此设备")
         self._screenshot_overlays = []
-        self._screenshot_hotkey = GlobalScreenshotHotkey(self, self.capture_screenshot)
-        if not self._screenshot_hotkey.registered:
-            self.statusBar().showMessage(
-                "本地模式 · 题库数据保存在此设备    |    Ctrl+Alt+S（仅应用打开时可用）"
-            )
-            screenshot_button.setToolTip("快捷键仅在本应用打开时可用：Ctrl+Alt+S")
+        self._screenshot_temp_dirs = []
+        self._recognition_dialogs = set()
+        self._profiles_dialog = None
+        self.screenshot_shortcut = str(
+            QSettings().value("shortcuts/screenshot", "Ctrl+Alt+S")
+        )
+        self._screenshot_hotkey = GlobalScreenshotHotkey(
+            self, self.capture_screenshot, self.screenshot_shortcut
+        )
+        self._update_screenshot_status()
         self.refresh()
         self._update_actions()
 
@@ -473,17 +475,41 @@ class MainWindow(QMainWindow):
 
     def _screenshot_captured(self, image):
         self._cancel_screenshot()
-        with tempfile.TemporaryDirectory(prefix="mistake-notebook-capture-") as directory:
-            image_path = Path(directory) / "question.png"
-            if not image.save(str(image_path), "PNG"):
-                QMessageBox.warning(self, "截图失败", "无法保存截图，请重试或改用图片选择。")
-                return
-            del image
-            self.start_image_recognition(image_path, auto_recognize=True)
+        directory = tempfile.TemporaryDirectory(prefix="mistake-notebook-capture-")
+        image_path = Path(directory.name) / "question.png"
+        if not image.save(str(image_path), "PNG"):
+            directory.cleanup()
+            QMessageBox.warning(self, "截图失败", "无法保存截图，请重试或改用图片选择。")
+            return
+        del image
+        self._screenshot_temp_dirs.append(directory)
+        dialog = self.start_image_recognition(image_path, auto_recognize=True)
+        dialog.finished.connect(lambda _result, temp=directory: self._cleanup_screenshot(temp))
+
+    def _cleanup_screenshot(self, directory):
+        directory.cleanup()
+        if directory in self._screenshot_temp_dirs:
+            self._screenshot_temp_dirs.remove(directory)
+
+    def set_screenshot_shortcut(self, shortcut):
+        self._screenshot_hotkey.close()
+        self.screenshot_shortcut = shortcut
+        self._screenshot_hotkey = GlobalScreenshotHotkey(self, self.capture_screenshot, shortcut)
+        self._update_screenshot_status()
+        return self._screenshot_hotkey.registered
+
+    def _update_screenshot_status(self):
+        suffix = "" if self._screenshot_hotkey.registered else "（仅应用打开时可用）"
+        self.statusBar().showMessage(
+            f"本地模式 · 题库数据保存在此设备    |    截图识题：{self.screenshot_shortcut}{suffix}"
+        )
 
     def closeEvent(self, event):
         self._cancel_screenshot()
         self._screenshot_hotkey.close()
+        for directory in self._screenshot_temp_dirs:
+            directory.cleanup()
+        self._screenshot_temp_dirs.clear()
         super().closeEvent(event)
 
     def refresh(self):
@@ -652,9 +678,15 @@ class MainWindow(QMainWindow):
 
     def start_image_recognition(self, image_path=None, auto_recognize=False):
         dialog = ImageRecognitionDialog(image_path, self, auto_recognize=auto_recognize)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self._refresh_filter_options()
-            self.refresh()
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        self._recognition_dialogs.add(dialog)
+        dialog.accepted.connect(self._refresh_filter_options)
+        dialog.accepted.connect(self.refresh)
+        dialog.finished.connect(lambda _result, target=dialog: self._recognition_dialogs.discard(target))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
 
     def dragEnterEvent(self, event):
         if any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -698,7 +730,11 @@ class MainWindow(QMainWindow):
         HistoryDialog(self).exec()
 
     def manage_profiles(self):
-        ProfilesDialog(self).exec()
+        if self._profiles_dialog is None:
+            self._profiles_dialog = ProfilesDialog(self)
+        self._profiles_dialog.show()
+        self._profiles_dialog.raise_()
+        self._profiles_dialog.activateWindow()
 
     def create_backup(self):
         default_path = store.DATA_DIR / "错题本备份.zip"

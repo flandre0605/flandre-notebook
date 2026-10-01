@@ -1,22 +1,25 @@
 from uuid import uuid4
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QSettings, Qt, QThreadPool
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QInputDialog, QLineEdit, QListWidget, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
+    QInputDialog, QKeySequenceEdit, QLineEdit, QListWidget, QMessageBox, QPushButton,
+    QSpinBox, QVBoxLayout,
 )
 
 from app.database import store
 from app.services import credentials
 from app.services.model_provider import list_models, test_profile, validate_profile
+from app.ui.screenshot import GlobalScreenshotHotkey
 from app.ui.worker import Worker
 
 
 class ProfilesDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("模型服务配置")
-        self.resize(720, 480)
+        self.setWindowTitle("设置与模型服务")
+        self.resize(760, 540)
         self.profiles = QListWidget()
         self.profiles.currentRowChanged.connect(self._show_profile)
         self.name = QLineEdit()
@@ -41,6 +44,15 @@ class ProfilesDialog(QDialog):
         self.test_button.clicked.connect(self._test)
         self.connection_status = QLabel("尚未测试连接")
         self.connection_status.setStyleSheet("color:#7b8799;font-size:12px;")
+        self.screenshot_shortcut = QKeySequenceEdit(
+            QKeySequence(QSettings().value("shortcuts/screenshot", "Ctrl+Alt+S"))
+        )
+        self.apply_shortcut_button = QPushButton("应用快捷键")
+        self.apply_shortcut_button.clicked.connect(self._apply_screenshot_shortcut)
+        self.shortcut_status = QLabel(
+            f"当前快捷键：{self.screenshot_shortcut.keySequence().toString(QKeySequence.SequenceFormat.NativeText)}"
+        )
+        self.shortcut_status.setStyleSheet("color:#7b8799;font-size:12px;")
         self.new_button = QPushButton("新增")
         self.save_button = QPushButton("保存配置")
         self.delete_button = QPushButton("删除")
@@ -60,6 +72,11 @@ class ProfilesDialog(QDialog):
         form.addRow("超时", self.timeout)
         form.addRow("能力", self.vision)
         form.addRow("状态", self.enabled)
+        shortcut_row = QHBoxLayout()
+        shortcut_row.addWidget(self.screenshot_shortcut, 1)
+        shortcut_row.addWidget(self.apply_shortcut_button)
+        form.addRow("截图快捷键", shortcut_row)
+        form.addRow("", self.shortcut_status)
         connection_row = QHBoxLayout()
         connection_row.addWidget(self.test_button)
         connection_row.addWidget(self.connection_status, 1)
@@ -80,6 +97,25 @@ class ProfilesDialog(QDialog):
         self.timeout.valueChanged.connect(self._mark_edited)
         self.vision.stateChanged.connect(self._mark_edited)
         self.enabled.stateChanged.connect(self._mark_edited)
+
+    def _apply_screenshot_shortcut(self):
+        sequence = self.screenshot_shortcut.keySequence()
+        modifiers, key = GlobalScreenshotHotkey._native_combination(sequence)
+        if sequence.count() != 1 or not modifiers or key is None:
+            self.shortcut_status.setText("请设置一个带修饰键的按键组合（如 Ctrl+Alt+S）")
+            self.shortcut_status.setStyleSheet("color:#b84d58;font-size:12px;")
+            return
+        shortcut = sequence.toString(QKeySequence.SequenceFormat.PortableText)
+        settings = QSettings()
+        settings.setValue("shortcuts/screenshot", shortcut)
+        parent = self.parent()
+        registered = parent.set_screenshot_shortcut(shortcut) if parent else False
+        if registered:
+            self.shortcut_status.setText(f"已启用全局快捷键：{shortcut}")
+            self.shortcut_status.setStyleSheet("color:#27734b;font-size:12px;")
+        else:
+            self.shortcut_status.setText(f"{shortcut} 当前仅在应用打开时可用，可能与其他快捷键冲突")
+            self.shortcut_status.setStyleSheet("color:#a66a16;font-size:12px;")
 
     def _reload(self, selected_id=None):
         self.rows = store.list_profiles()

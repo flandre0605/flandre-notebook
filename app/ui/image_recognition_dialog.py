@@ -160,7 +160,7 @@ class ImageRecognitionDialog(QDialog):
         if mime_data.hasImage():
             image = clipboard.image()
             if image.isNull():
-                QMessageBox.information(self, "剪贴板没有图片", "请先复制一张图片，再点击粘贴。")
+                self.status.setText("剪贴板里没有可读取的图片。")
                 return
             temporary = tempfile.TemporaryDirectory(prefix="mistake-notebook-image-")
             path = Path(temporary.name) / "clipboard.png"
@@ -176,7 +176,7 @@ class ImageRecognitionDialog(QDialog):
             if path:
                 self.set_image(path)
                 return
-        QMessageBox.information(self, "剪贴板没有图片", "请先复制图片或图片文件，再点击粘贴。")
+        self.status.setText("剪贴板里没有图片或图片文件。")
 
     def set_image(self, path: str):
         self.image_path = None
@@ -185,7 +185,7 @@ class ImageRecognitionDialog(QDialog):
         try:
             self.image_path = attachments.validate_image(path)
         except (OSError, ValueError) as error:
-            QMessageBox.warning(self, "图片不可用", str(error))
+            self.status.setText(f"图片不可用：{error}")
             return
         self.drop_zone.set_image(self.image_path)
         self.status.setText(f"已选择：{self.image_path.name}")
@@ -193,12 +193,12 @@ class ImageRecognitionDialog(QDialog):
 
     def recognize(self):
         if self.image_path is None:
-            QMessageBox.information(self, "请选择图片", "请先拖入图片或点击「选择图片」。")
+            self.status.setText("请先拖入、粘贴或选择一张题目图片。")
             return
         profile_id = self.profile.currentData()
         profile = store.get_profile(profile_id) if profile_id else None
         if profile is None:
-            QMessageBox.information(self, "请选择模型", "没有可用的视觉模型配置。")
+            self.status.setText("没有可用的视觉模型，请先到设置中启用一个视觉模型。")
             return
         self.recognize_button.setEnabled(False)
         self.choose_button.setEnabled(False)
@@ -216,8 +216,13 @@ class ImageRecognitionDialog(QDialog):
         self.profile.setEnabled(bool(self.profiles))
         self.status.setText("识别完成 · 请核对草稿")
         editor = RecognitionDraftDialog(None, self.image_path, draft, self)
-        if editor.exec() != QDialog.DialogCode.Accepted:
-            return
+        editor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        editor.accepted.connect(lambda current=editor: self._save_draft(current))
+        editor.show()
+        editor.raise_()
+        editor.activateWindow()
+
+    def _save_draft(self, editor):
         question_ids = []
         try:
             for values in editor.values():
@@ -233,23 +238,16 @@ class ImageRecognitionDialog(QDialog):
                 except Exception as cleanup_error:
                     cleanup_errors.append(str(cleanup_error))
             detail = f"\n清理失败：{'；'.join(cleanup_errors)}" if cleanup_errors else ""
-            QMessageBox.critical(self, "收录失败", f"题目或原图没有保存：\n{error}{detail}")
+            self.status.setText(f"收录失败：{error}{detail}")
+            self.status.setToolTip(str(error))
             return
-        QMessageBox.information(
-            self, "收录完成", f"已收录 {len(question_ids)} 道题，原图已保存为题目附件。"
-        )
+        self.status.setText(f"已收录 {len(question_ids)} 道题，原图已保存为题目附件。")
         self.accept()
 
     def _failed(self, error):
         self.recognize_button.setEnabled(True)
         self.choose_button.setEnabled(True)
         self.profile.setEnabled(bool(self.profiles))
-        self.status.setText("识题失败，可以检查配置后重试。")
-        message = QMessageBox(self)
-        message.setIcon(QMessageBox.Icon.Warning)
-        message.setWindowTitle("识题失败")
-        message.setText(str(error))
+        self.status.setText(f"识题失败：{error}")
         details = getattr(error, "raw_response", "")
-        if details:
-            message.setDetailedText(details)
-        message.exec()
+        self.status.setToolTip(details or str(error))
