@@ -75,7 +75,7 @@ class PracticeDialog(QDialog):
         self.images_button.clicked.connect(self.show_images)
 
         self.user_answer = QPlainTextEdit()
-        self.user_answer.setPlaceholderText("可以先在这里写下你的思路或答案（不会保存）")
+        self.user_answer.setPlaceholderText("写下你的思路或答案；点击“记录并继续”后会保存在练习记录中")
         self.user_answer.setMaximumHeight(100)
         self.reveal_button = QPushButton("提交并查看答案")
         self.reveal_button.setObjectName("primaryButton")
@@ -191,6 +191,7 @@ class PracticeDialog(QDialog):
                 int(time.monotonic() - self.started_at),
                 self.mastery.currentData(),
                 self.mistake_reason.toPlainText(),
+                self.user_answer.toPlainText(),
             )
         except (sqlite3.Error, ValueError) as error:
             QMessageBox.critical(self, "记录失败", f"本次练习没有保存：\n{error}")

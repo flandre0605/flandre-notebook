@@ -18,18 +18,20 @@ class HistoryDialog(QDialog):
         self.setWindowTitle("练习记录")
         self.resize(900, 560)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["时间（UTC）", "学科", "题目", "结果", "掌握程度", "用时", "错因"]
+            ["时间（UTC）", "学科", "题目", "我的作答", "结果", "掌握程度", "用时", "错因"]
         )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        for column in (0, 1, 3, 4, 5, 6):
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        for column in (0, 1, 4, 5, 6, 7):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
 
         layout = QVBoxLayout(self)
@@ -52,6 +54,7 @@ class HistoryDialog(QDialog):
                 attempt["answered_at"],
                 attempt["subject"],
                 attempt["stem"].replace("\n", " "),
+                attempt["user_answer"].replace("\n", " "),
                 result_names[attempt["result"]],
                 mastery_names[attempt["mastery"]],
                 f"{attempt['duration_seconds']} 秒",
@@ -59,6 +62,8 @@ class HistoryDialog(QDialog):
             )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if column == 2:
-                    item.setToolTip(attempt["stem"])
+                if column in (2, 3):
+                    item.setToolTip(
+                        attempt["stem"] if column == 2 else attempt["user_answer"]
+                    )
                 self.table.setItem(index, column, item)

@@ -7,7 +7,7 @@ from typing import Iterator
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 DATABASE_PATH = DATA_DIR / "questions.db"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 @contextmanager
@@ -112,6 +112,14 @@ def initialize(database_path: Path = DATABASE_PATH) -> None:
                 "ALTER TABLE model_profiles ADD COLUMN endpoint_path TEXT NOT NULL DEFAULT '/chat/completions'"
             )
             connection.execute("PRAGMA user_version = 4")
+            version = 4
+        if version < 5:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "ALTER TABLE practice_attempts ADD COLUMN user_answer TEXT NOT NULL DEFAULT ''"
+            )
+            connection.execute("PRAGMA user_version = 5")
 
 
 def _question_conditions(
@@ -277,6 +285,7 @@ def record_attempt(
     duration_seconds: int,
     mastery: str,
     mistake_reason: str = "",
+    user_answer: str = "",
 ) -> None:
     from datetime import datetime, timedelta, timezone
 
@@ -291,9 +300,16 @@ def record_attempt(
     with _connection() as connection:
         connection.execute(
             """INSERT INTO practice_attempts
-               (question_id, result, duration_seconds, mistake_reason, mastery)
-               VALUES (?, ?, ?, ?, ?)""",
-            (question_id, result, max(0, duration_seconds), mistake_reason.strip(), mastery),
+               (question_id, result, duration_seconds, mistake_reason, mastery, user_answer)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                question_id,
+                result,
+                max(0, duration_seconds),
+                mistake_reason.strip(),
+                mastery,
+                user_answer.strip(),
+            ),
         )
         connection.execute(
             """INSERT INTO review_state
@@ -314,7 +330,7 @@ def list_attempts(limit: int = 500) -> list[sqlite3.Row]:
     with _connection() as connection:
         return connection.execute(
             """SELECT a.answered_at, a.result, a.duration_seconds, a.mistake_reason,
-                      a.mastery, q.stem, q.subject
+                      a.mastery, a.user_answer, q.stem, q.subject
                FROM practice_attempts a
                JOIN questions q ON q.id = a.question_id
                ORDER BY a.id DESC LIMIT ?""",
