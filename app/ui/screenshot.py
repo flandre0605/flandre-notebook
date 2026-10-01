@@ -3,8 +3,8 @@ import sys
 from ctypes import wintypes
 
 from PySide6.QtCore import QAbstractNativeEventFilter, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QShortcut, QWidget
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QPixmap, QShortcut
+from PySide6.QtWidgets import QApplication, QWidget
 
 
 class ScreenshotOverlay(QWidget):
