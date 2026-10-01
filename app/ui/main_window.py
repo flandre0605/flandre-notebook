@@ -119,6 +119,8 @@ class QuestionDialog(QDialog):
         self.explanation = QPlainTextEdit()
         self.explanation.setMinimumHeight(85)
         self.is_wrong = QCheckBox("标记为错题")
+        self.validation_status = QLabel()
+        self.validation_status.setStyleSheet("color:#b84d58;font-size:12px;")
 
         form = QFormLayout()
         form.setHorizontalSpacing(18)
@@ -141,6 +143,7 @@ class QuestionDialog(QDialog):
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(18)
         layout.addLayout(form)
+        layout.addWidget(self.validation_status)
         layout.addWidget(buttons)
 
         if question:
@@ -153,10 +156,17 @@ class QuestionDialog(QDialog):
 
     def _save_if_valid(self):
         if not self.stem.toPlainText().strip():
-            QMessageBox.warning(self, "缺少题干", "请先输入题干。")
+            self.validation_status.setText("请先输入题干。")
             return
-        if self.on_save and not self.on_save(self.values()):
-            return
+        self.validation_status.clear()
+        if self.on_save:
+            try:
+                if not self.on_save(self.values()):
+                    self.validation_status.setText("题目未保存，请检查输入后重试。")
+                    return
+            except Exception as error:
+                self.validation_status.setText(f"保存失败：{error}")
+                return
         self.accept()
 
     def values(self) -> dict[str, str | int]:
@@ -207,8 +217,9 @@ class MainWindow(QMainWindow):
         section_label = QLabel("学习空间")
         section_label.setStyleSheet("color:#9aa5b5;font-size:11px;padding:0 10px 5px;")
         sidebar_layout.addWidget(section_label)
+        self._navigation_buttons = []
 
-        def add_nav(text, callback, active=False, utility=False):
+        def add_nav(text, callback, page_key=None, active=False, utility=False):
             button = QPushButton(text)
             button.setObjectName(
                 "navButtonActive" if active else "navUtility" if utility else "navButton"
@@ -216,12 +227,14 @@ class MainWindow(QMainWindow):
             button.setMinimumHeight(43)
             button.clicked.connect(callback)
             sidebar_layout.addWidget(button)
+            if page_key:
+                self._navigation_buttons.append((button, page_key))
             return button
 
-        add_nav("▦  我的题库", self.refresh, active=True)
-        add_nav("✦  AI 识题", self.recognize_selected)
-        add_nav("▶  开始练习", self.start_practice)
-        add_nav("◷  练习记录", self.show_history)
+        add_nav("▦  我的题库", self.show_library, page_key="library", active=True)
+        add_nav("✦  AI 识题", self.recognize_selected, page_key="recognition")
+        add_nav("▶  开始练习", self.start_practice, page_key="practice")
+        add_nav("◷  练习记录", self.show_history, page_key="history")
         sidebar_layout.addSpacing(18)
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
@@ -231,7 +244,7 @@ class MainWindow(QMainWindow):
         section_label = QLabel("管理")
         section_label.setStyleSheet("color:#9aa5b5;font-size:11px;padding:0 10px 5px;")
         sidebar_layout.addWidget(section_label)
-        add_nav("⚙  设置与模型服务", self.manage_profiles, utility=True)
+        add_nav("⚙  设置与模型服务", self.manage_profiles, page_key="settings", utility=True)
         add_nav("↓  备份数据", self.create_backup, utility=True)
         add_nav("↻  恢复备份", self.restore_backup, utility=True)
         sidebar_layout.addStretch()
@@ -434,13 +447,21 @@ class MainWindow(QMainWindow):
         layout.addLayout(stats)
         layout.addWidget(toolbar)
         layout.addLayout(list_section, 1)
-        shell.addWidget(page, 1)
+        self.page_stack = QStackedWidget()
+        self.page_stack.addWidget(page)
+        self._pages = {"library": page}
+        self._page_containers = {"library": page}
+        self._page_dialogs = {}
+        self._page_nav_keys = {"library": "library"}
+        self._page_number = 0
+        shell.addWidget(self.page_stack, 1)
         self.setCentralWidget(central)
         self.statusBar().showMessage("本地模式 · 题库数据保存在此设备")
         self._screenshot_overlays = []
         self._screenshot_temp_dirs = []
-        self._recognition_dialogs = set()
         self._profiles_dialog = None
+        self._practice_setup = None
+        self._active_recognition_key = None
         self.screenshot_shortcut = str(
             QSettings().value("shortcuts/screenshot", "Ctrl+Alt+S")
         )
@@ -503,6 +524,69 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"本地模式 · 题库数据保存在此设备    |    截图识题：{self.screenshot_shortcut}{suffix}"
         )
+
+    def _show_page(self, key):
+        page = self._pages.get(key)
+        if page is None:
+            return
+        self.page_stack.setCurrentWidget(page)
+        dialog = self._page_dialogs.get(key)
+        if dialog is not None:
+            dialog.show()
+        active_key = self._page_nav_keys.get(key, key)
+        for button, page_key in self._navigation_buttons:
+            active = page_key == active_key
+            button.setObjectName("navButtonActive" if active else "navUtility" if page_key == "settings" else "navButton")
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _embed_dialog_page(
+        self, key, dialog, title, back_key="library", nav_key=None, persistent=False
+    ):
+        if key in self._pages and key != "library":
+            self._discard_page(key)
+        dialog.setWindowFlags(Qt.WindowType.Widget)
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(28, 24, 28, 20)
+        layout.setSpacing(14)
+        header = QHBoxLayout()
+        heading = QLabel(title)
+        heading.setObjectName("pageTitle")
+        back_button = QPushButton("← 返回")
+        back_button.clicked.connect(
+            lambda: self._show_page(back_key) if persistent else dialog.reject()
+        )
+        header.addWidget(heading)
+        header.addStretch()
+        header.addWidget(back_button)
+        layout.addLayout(header)
+        layout.addWidget(dialog, 1)
+        self.page_stack.addWidget(container)
+        self._pages[key] = container
+        self._page_containers[key] = container
+        self._page_dialogs[key] = dialog
+        self._page_nav_keys[key] = nav_key or self._page_nav_keys.get(back_key, back_key)
+        return container
+
+    def _leave_dialog_page(self, key, back_key="library", persistent=False):
+        self._show_page(back_key)
+        if not persistent:
+            self._discard_page(key)
+
+    def _discard_page(self, key):
+        container = self._page_containers.pop(key, None)
+        self._pages.pop(key, None)
+        self._page_dialogs.pop(key, None)
+        self._page_nav_keys.pop(key, None)
+        if container is not None:
+            self.page_stack.removeWidget(container)
+            container.deleteLater()
+
+    def show_library(self):
+        self._refresh_filter_options()
+        self.refresh()
+        self._show_page("library")
 
     def closeEvent(self, event):
         self._cancel_screenshot()
@@ -611,19 +695,25 @@ class MainWindow(QMainWindow):
         return int(item.data(Qt.ItemDataRole.UserRole)) if item else None
 
     def add_question(self):
-        QuestionDialog(parent=self, on_save=self._save_new_question).exec()
+        if "question" in self._pages:
+            self._show_page("question")
+            return
+        dialog = QuestionDialog(parent=self, on_save=self._save_new_question)
+        self._embed_dialog_page("question", dialog, "新增题目")
+        dialog.accepted.connect(lambda: self._leave_dialog_page("question"))
+        dialog.rejected.connect(lambda: self._leave_dialog_page("question"))
+        self._show_page("question")
 
     def _save_new_question(self, values):
-        try:
-            store.save_question(values)
-        except sqlite3.Error as error:
-            QMessageBox.critical(self, "保存失败", f"题目没有保存：\n{error}")
-            return False
+        store.save_question(values)
         self._refresh_filter_options()
         self.refresh()
         return True
 
     def edit_question(self):
+        if "question" in self._pages:
+            self._show_page("question")
+            return
         question_id = self._selected_id()
         if question_id is None:
             return
@@ -631,18 +721,18 @@ class MainWindow(QMainWindow):
         if question is None:
             self.refresh()
             return
-        QuestionDialog(
+        dialog = QuestionDialog(
             question,
             self,
             on_save=lambda values: self._save_existing_question(question_id, values),
-        ).exec()
+        )
+        self._embed_dialog_page("question", dialog, "编辑题目")
+        dialog.accepted.connect(lambda: self._leave_dialog_page("question"))
+        dialog.rejected.connect(lambda: self._leave_dialog_page("question"))
+        self._show_page("question")
 
     def _save_existing_question(self, question_id, values):
-        try:
-            store.save_question(values, question_id)
-        except sqlite3.Error as error:
-            QMessageBox.critical(self, "保存失败", f"题目没有保存：\n{error}")
-            return False
+        store.save_question(values, question_id)
         self._refresh_filter_options()
         self.refresh()
         return True
@@ -671,22 +761,44 @@ class MainWindow(QMainWindow):
         question_id = self._selected_id()
         if question_id is None:
             return
-        AttachmentsDialog(question_id, self).exec()
+        self._show_attachments(question_id, "library")
+
+    def _show_attachments(self, question_id, back_key):
+        dialog = AttachmentsDialog(question_id, self)
+        self._embed_dialog_page(
+            "attachments", dialog, "题目图片", back_key=back_key,
+            nav_key=self._page_nav_keys.get(back_key, back_key),
+        )
+        dialog.accepted.connect(lambda: self._leave_dialog_page("attachments", back_key))
+        dialog.rejected.connect(lambda: self._leave_dialog_page("attachments", back_key))
+        self._show_page("attachments")
 
     def recognize_selected(self):
         self.start_image_recognition()
 
     def start_image_recognition(self, image_path=None, auto_recognize=False):
+        if image_path is None and self._active_recognition_key in self._pages:
+            self._show_page(self._active_recognition_key)
+            return self._page_dialogs[self._active_recognition_key]
         dialog = ImageRecognitionDialog(image_path, self, auto_recognize=auto_recognize)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        self._recognition_dialogs.add(dialog)
+        self._page_number += 1
+        key = f"recognition_{self._page_number}"
+        self._active_recognition_key = key
+        self._embed_dialog_page(key, dialog, "AI 图片识题", nav_key="recognition")
         dialog.accepted.connect(self._refresh_filter_options)
         dialog.accepted.connect(self.refresh)
-        dialog.finished.connect(lambda _result, target=dialog: self._recognition_dialogs.discard(target))
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+        dialog.accepted.connect(lambda: self._leave_dialog_page(key))
+        dialog.rejected.connect(lambda: self._leave_dialog_page(key))
+        dialog.finished.connect(lambda _result: self._cleanup_finished_recognition(key))
+        self._show_page(key)
         return dialog
+
+    def _cleanup_finished_recognition(self, key):
+        if self.page_stack.currentWidget() == self._pages.get(key):
+            self._show_page("library")
+        if self._active_recognition_key == key:
+            self._active_recognition_key = None
+        self._discard_page(key)
 
     def dragEnterEvent(self, event):
         if any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -703,9 +815,23 @@ class MainWindow(QMainWindow):
         event.ignore()
 
     def start_practice(self):
-        setup = PracticeSetupDialog(self)
-        if setup.exec() != QDialog.DialogCode.Accepted:
+        if "practice_run" in self._pages:
+            self._show_page("practice_run")
             return
+        setup = self._practice_setup
+        if setup is None:
+            setup = PracticeSetupDialog(self)
+            self._practice_setup = setup
+            self._embed_dialog_page(
+                "practice_setup", setup, "开始练习", nav_key="practice", persistent=True
+            )
+            setup.accepted.connect(self._begin_practice)
+            setup.rejected.connect(lambda: self._show_page("library"))
+        setup.show()
+        self._show_page("practice_setup")
+
+    def _begin_practice(self):
+        setup = self._practice_setup
         mode, random_order = setup.values()
         try:
             questions = store.practice_questions(
@@ -716,25 +842,45 @@ class MainWindow(QMainWindow):
                 self.state_filter.currentData(),
             )
         except sqlite3.Error as error:
-            QMessageBox.critical(self, "读取失败", f"无法生成练习题：\n{error}")
+            setup.status.setText(f"无法生成练习题：{error}")
+            setup.show()
             return
         if not questions:
-            QMessageBox.information(self, "没有待练习题目", "这个范围目前没有题目。")
+            setup.status.setText("当前筛选范围内没有待练习题目。")
+            setup.show()
             return
+        setup.status.clear()
         if random_order:
             random.shuffle(questions)
-        PracticeDialog(questions, self).exec()
+        dialog = PracticeDialog(questions, self)
+        self._embed_dialog_page(
+            "practice_run", dialog, "练习中", nav_key="practice"
+        )
+        dialog.images_requested.connect(
+            lambda question_id: self._show_attachments(question_id, "practice_run")
+        )
+        dialog.accepted.connect(lambda: self._leave_dialog_page("practice_run"))
+        dialog.rejected.connect(lambda: self._leave_dialog_page("practice_run"))
+        self._show_page("practice_run")
         self.refresh()
 
     def show_history(self):
-        HistoryDialog(self).exec()
+        if "history" not in self._pages:
+            history = HistoryDialog(self)
+            self.history_page = history
+            self._embed_dialog_page(
+                "history", history, "练习记录", persistent=True
+            )
+        self.history_page.refresh()
+        self._show_page("history")
 
     def manage_profiles(self):
         if self._profiles_dialog is None:
             self._profiles_dialog = ProfilesDialog(self)
-        self._profiles_dialog.show()
-        self._profiles_dialog.raise_()
-        self._profiles_dialog.activateWindow()
+            self._embed_dialog_page(
+                "settings", self._profiles_dialog, "设置与模型服务", persistent=True
+            )
+        self._show_page("settings")
 
     def create_backup(self):
         default_path = store.DATA_DIR / "错题本备份.zip"

@@ -4,7 +4,7 @@ from pathlib import Path
 from PySide6.QtCore import QThreadPool, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
+    QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
@@ -105,6 +105,8 @@ class ImageRecognitionDialog(QDialog):
         self._clipboard_temp_dirs = []
         self.drop_zone = ImageDropZone()
         self.drop_zone.image_dropped.connect(self.set_image)
+        self.views = QStackedWidget()
+        self.input_page = QWidget()
         self.profile = QComboBox()
         self.profiles = store.list_profiles(enabled_only=True)
         self.profiles = [profile for profile in self.profiles if profile["vision_enabled"]]
@@ -130,14 +132,18 @@ class ImageRecognitionDialog(QDialog):
         actions.addWidget(self.paste_button)
         actions.addWidget(self.choose_button)
         actions.addWidget(self.recognize_button)
+        input_layout = QVBoxLayout(self.input_page)
+        input_layout.setContentsMargins(24, 20, 24, 20)
+        input_layout.setSpacing(14)
+        input_layout.addWidget(heading)
+        input_layout.addWidget(subtitle)
+        input_layout.addWidget(self.drop_zone, 1)
+        input_layout.addWidget(self.status)
+        input_layout.addLayout(actions)
+        self.views.addWidget(self.input_page)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(14)
-        layout.addWidget(heading)
-        layout.addWidget(subtitle)
-        layout.addWidget(self.drop_zone, 1)
-        layout.addWidget(self.status)
-        layout.addLayout(actions)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.views)
         self.recognize_button.setEnabled(bool(self.profiles))
         self.profile.setEnabled(bool(self.profiles))
         if not self.profiles:
@@ -166,7 +172,7 @@ class ImageRecognitionDialog(QDialog):
             path = Path(temporary.name) / "clipboard.png"
             if not image.save(str(path), "PNG"):
                 temporary.cleanup()
-                QMessageBox.warning(self, "粘贴失败", "无法读取剪贴板中的图片。")
+                self.status.setText("粘贴失败：无法读取剪贴板中的图片。")
                 return
             self._clipboard_temp_dirs.append(temporary)
             self.set_image(str(path))
@@ -216,11 +222,18 @@ class ImageRecognitionDialog(QDialog):
         self.profile.setEnabled(bool(self.profiles))
         self.status.setText("识别完成 · 请核对草稿")
         editor = RecognitionDraftDialog(None, self.image_path, draft, self)
-        editor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        editor.accepted.connect(lambda current=editor: self._save_draft(current))
-        editor.show()
-        editor.raise_()
-        editor.activateWindow()
+        editor.setWindowFlags(Qt.WindowType.Widget)
+        editor.save_requested.connect(lambda current=editor: self._save_draft(current))
+        editor.rejected.connect(lambda current=editor: self._return_to_input(current))
+        self.draft_editor = editor
+        self.views.addWidget(editor)
+        self.views.setCurrentWidget(editor)
+
+    def _return_to_input(self, editor):
+        self.views.setCurrentWidget(self.input_page)
+        self.views.removeWidget(editor)
+        editor.deleteLater()
+        self.draft_editor = None
 
     def _save_draft(self, editor):
         question_ids = []
@@ -242,6 +255,7 @@ class ImageRecognitionDialog(QDialog):
             self.status.setToolTip(str(error))
             return
         self.status.setText(f"已收录 {len(question_ids)} 道题，原图已保存为题目附件。")
+        editor.accept()
         self.accept()
 
     def _failed(self, error):

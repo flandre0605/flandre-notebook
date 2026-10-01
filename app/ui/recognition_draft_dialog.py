@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (
 
 
 class RecognitionDraftDialog(QDialog):
+    save_requested = Signal()
+
     def __init__(self, question, image_path, draft, parent=None):
         super().__init__(parent)
         self.drafts = draft if isinstance(draft, list) else [draft]
@@ -64,6 +66,8 @@ class RecognitionDraftDialog(QDialog):
         )
         review_row = QHBoxLayout()
         self.instruction_label = QLabel(instruction)
+        self.validation_status = QLabel()
+        self.validation_status.setStyleSheet("color:#b84d58;font-size:12px;")
         self.progress_label = QLabel()
         self.progress_label.setStyleSheet(
             "background:#edf2ff;color:#365dcc;border-radius:10px;padding:5px 10px;font-weight:600;"
@@ -74,6 +78,7 @@ class RecognitionDraftDialog(QDialog):
         review_row.addWidget(self.remove_draft_button)
         layout.addLayout(review_row)
         layout.addLayout(content, 1)
+        layout.addWidget(self.validation_status)
         layout.addWidget(self.buttons)
         self._load_draft(0)
         self._update_progress()
@@ -138,9 +143,10 @@ class RecognitionDraftDialog(QDialog):
         )
         if missing is not None:
             self.question_selector.setCurrentIndex(missing)
-            QMessageBox.warning(self, "缺少题干", f"第 {missing + 1} 道题没有题干，请补充后再收录。")
+            self.validation_status.setText(f"第 {missing + 1} 道题没有题干，请补充后再收录。")
             return
-        self.accept()
+        self.validation_status.clear()
+        self.save_requested.emit()
 
     def values(self):
         self._save_current()

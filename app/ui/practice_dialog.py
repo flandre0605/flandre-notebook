@@ -1,7 +1,7 @@
 import sqlite3
 import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
 
 from app.database import store
 from app.services.grading import grade_answer
-from app.ui.attachments_dialog import AttachmentsDialog
 
 
 class PracticeSetupDialog(QDialog):
@@ -31,6 +30,8 @@ class PracticeSetupDialog(QDialog):
         self.mode.addItem("错题", "wrong")
         self.mode.addItem("到期复习", "due")
         self.random_order = QCheckBox("随机排列题目")
+        self.status = QLabel()
+        self.status.setStyleSheet("color:#b84d58;font-size:12px;")
 
         form = QFormLayout()
         form.addRow("练习范围", self.mode)
@@ -44,6 +45,7 @@ class PracticeSetupDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 20, 22, 18)
         layout.addLayout(form)
+        layout.addWidget(self.status)
         layout.addWidget(buttons)
 
     def values(self):
@@ -51,6 +53,8 @@ class PracticeSetupDialog(QDialog):
 
 
 class PracticeDialog(QDialog):
+    images_requested = Signal(int)
+
     def __init__(self, questions, parent=None):
         super().__init__(parent)
         self.questions = questions[:]
@@ -179,7 +183,7 @@ class PracticeDialog(QDialog):
         self.reveal_button.setVisible(False)
 
     def show_images(self):
-        AttachmentsDialog(self.questions[self.index]["id"], self).exec()
+        self.images_requested.emit(self.questions[self.index]["id"])
 
     def record_and_continue(self):
         question = self.questions[self.index]
@@ -194,7 +198,9 @@ class PracticeDialog(QDialog):
                 self.user_answer.toPlainText(),
             )
         except (sqlite3.Error, ValueError) as error:
-            QMessageBox.critical(self, "记录失败", f"本次练习没有保存：\n{error}")
+            self.judgement.setText(f"记录失败，本题没有保存：{error}")
+            self.judgement.setStyleSheet("font-weight:600;color:#b84d58;")
+            self.judgement.setVisible(True)
             return
 
         self.recorded_count += 1
@@ -202,11 +208,17 @@ class PracticeDialog(QDialog):
             self.correct_count += 1
         self.index += 1
         if self.index == len(self.questions):
-            QMessageBox.information(
-                self,
-                "练习完成",
-                f"本轮完成 {self.recorded_count} 题，自评正确 {self.correct_count} 题。",
+            self.progress.setText("本轮练习已完成")
+            self.stem.setText(
+                f"已完成 {self.recorded_count} 题\n\n记录为正确：{self.correct_count} 题"
             )
-            self.accept()
+            for widget in (
+                self.images_button, self.user_answer, self.reveal_button, self.solution,
+                self.judgement, self.result_choice, self.mastery, self.mistake_reason,
+            ):
+                widget.hide()
+            self.record_button.setText("返回题库")
+            self.record_button.clicked.disconnect(self.record_and_continue)
+            self.record_button.clicked.connect(self.accept)
             return
         self.show_question()

@@ -38,7 +38,7 @@ class AttachmentsDialog(QDialog):
 
         self.add_button = QPushButton("添加图片")
         self.remove_button = QPushButton("移除图片")
-        self.close_button = QPushButton("关闭")
+        self.close_button = QPushButton("返回")
         self.add_button.clicked.connect(self.add_images)
         self.remove_button.clicked.connect(self.remove_image)
         self.close_button.clicked.connect(self.accept)
