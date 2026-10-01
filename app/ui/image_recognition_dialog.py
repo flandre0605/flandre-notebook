@@ -1,7 +1,7 @@
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, Qt, Signal
+from PySide6.QtCore import QThreadPool, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QMessageBox,
@@ -96,7 +96,7 @@ class ImageDropZone(QFrame):
 
 
 class ImageRecognitionDialog(QDialog):
-    def __init__(self, image_path: str | Path | None = None, parent=None):
+    def __init__(self, image_path: str | Path | None = None, parent=None, auto_recognize=False):
         super().__init__(parent)
         self.setWindowTitle("AI 图片识题")
         self.resize(760, 650)
@@ -144,6 +144,8 @@ class ImageRecognitionDialog(QDialog):
             self.status.setText("没有已启用的视觉模型，请先到「设置 → 模型服务」添加配置。")
         if image_path:
             self.set_image(str(image_path))
+        if auto_recognize:
+            QTimer.singleShot(0, self.recognize)
 
     def choose_image(self):
         path, _ = QFileDialog.getOpenFileName(

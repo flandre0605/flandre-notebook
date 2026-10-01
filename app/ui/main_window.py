@@ -1,9 +1,11 @@
 import random
 import sqlite3
+import tempfile
 from pathlib import Path
 import zipfile
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,6 +36,7 @@ from app.ui.history_dialog import HistoryDialog
 from app.ui.image_recognition_dialog import ImageRecognitionDialog
 from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog
 from app.ui.profiles_dialog import ProfilesDialog
+from app.ui.screenshot import GlobalScreenshotHotkey, ScreenshotOverlay
 
 
 STYLE = """
@@ -217,6 +220,8 @@ class MainWindow(QMainWindow):
 
         add_nav("▦  我的题库", self.refresh, active=True)
         add_nav("✦  AI 识题", self.recognize_selected)
+        screenshot_button = add_nav("▣  截图识题", self.capture_screenshot)
+        screenshot_button.setToolTip("全局快捷键：Ctrl+Alt+S")
         add_nav("▶  开始练习", self.start_practice)
         add_nav("◷  练习记录", self.show_history)
         sidebar_layout.addSpacing(18)
@@ -433,9 +438,55 @@ class MainWindow(QMainWindow):
         layout.addLayout(list_section, 1)
         shell.addWidget(page, 1)
         self.setCentralWidget(central)
-        self.statusBar().showMessage("本地模式 · 题库数据保存在此设备")
+        self.statusBar().showMessage("本地模式 · 题库数据保存在此设备    |    Ctrl+Alt+S 截图识题")
+        self._screenshot_overlays = []
+        self._screenshot_hotkey = GlobalScreenshotHotkey(self, self.capture_screenshot)
+        if not self._screenshot_hotkey.registered:
+            self.statusBar().showMessage(
+                "本地模式 · 题库数据保存在此设备    |    Ctrl+Alt+S（仅应用打开时可用）"
+            )
+            screenshot_button.setToolTip("快捷键仅在本应用打开时可用：Ctrl+Alt+S")
         self.refresh()
         self._update_actions()
+
+    def capture_screenshot(self):
+        if self._screenshot_overlays:
+            return
+        for screen in QGuiApplication.screens():
+            screenshot = screen.grabWindow(0)
+            if screenshot.isNull():
+                continue
+            overlay = ScreenshotOverlay(screen, screenshot)
+            overlay.captured.connect(self._screenshot_captured)
+            overlay.cancelled.connect(self._cancel_screenshot)
+            self._screenshot_overlays.append(overlay)
+        if not self._screenshot_overlays:
+            QMessageBox.warning(self, "截图失败", "无法读取当前屏幕，请改用图片选择或粘贴。")
+            return
+        for overlay in self._screenshot_overlays:
+            overlay.show()
+            overlay.raise_()
+        self._screenshot_overlays[0].activateWindow()
+        self._screenshot_overlays[0].setFocus()
+
+    def _cancel_screenshot(self):
+        for overlay in self._screenshot_overlays:
+            overlay.close()
+        self._screenshot_overlays.clear()
+
+    def _screenshot_captured(self, image):
+        self._cancel_screenshot()
+        with tempfile.TemporaryDirectory(prefix="mistake-notebook-capture-") as directory:
+            image_path = Path(directory) / "question.png"
+            if not image.save(str(image_path), "PNG"):
+                QMessageBox.warning(self, "截图失败", "无法保存截图，请重试或改用图片选择。")
+                return
+            self.start_image_recognition(image_path, auto_recognize=True)
+
+    def closeEvent(self, event):
+        self._cancel_screenshot()
+        self._screenshot_hotkey.close()
+        super().closeEvent(event)
 
     def refresh(self):
         try:
@@ -601,8 +652,8 @@ class MainWindow(QMainWindow):
     def recognize_selected(self):
         self.start_image_recognition()
 
-    def start_image_recognition(self, image_path=None):
-        dialog = ImageRecognitionDialog(image_path, self)
+    def start_image_recognition(self, image_path=None, auto_recognize=False):
+        dialog = ImageRecognitionDialog(image_path, self, auto_recognize=auto_recognize)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._refresh_filter_options()
             self.refresh()
