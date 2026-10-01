@@ -6,8 +6,14 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from PySide6.QtCore import QBuffer, QIODevice, QSize, Qt
+from PySide6.QtGui import QImageReader
+
 from app.prompts import QUESTION_RECOGNITION_SYSTEM, QUESTION_RECOGNITION_USER
 from app.services.credentials import get_api_key
+
+MAX_API_IMAGE_EDGE = 2560
+MAX_RAW_API_IMAGE_BYTES = 4 * 1024 * 1024
 
 
 class ProviderError(RuntimeError):
@@ -259,10 +265,40 @@ def _parse_recognition_json(content: str) -> dict | list:
     raise json.JSONDecodeError("No valid recognition object", candidate, 0)
 
 
+def _image_for_request(image_path: Path, mime_type: str) -> tuple[str, str]:
+    reader = QImageReader(str(image_path))
+    size = reader.size()
+    if image_path.stat().st_size <= MAX_RAW_API_IMAGE_BYTES and (
+        not size.isValid() or max(size.width(), size.height()) <= MAX_API_IMAGE_EDGE
+    ):
+        return mime_type, base64.b64encode(image_path.read_bytes()).decode("ascii")
+
+    reader.setAutoTransform(True)
+    if size.isValid() and max(size.width(), size.height()) > MAX_API_IMAGE_EDGE:
+        reader.setScaledSize(
+            size.scaled(
+                QSize(MAX_API_IMAGE_EDGE, MAX_API_IMAGE_EDGE),
+                Qt.AspectRatioMode.KeepAspectRatio,
+            )
+        )
+    image = reader.read()
+    if image.isNull():
+        return mime_type, base64.b64encode(image_path.read_bytes()).decode("ascii")
+
+    output_format = "PNG" if mime_type == "image/png" or image.hasAlphaChannel() else "JPEG"
+    output_mime = "image/png" if output_format == "PNG" else "image/jpeg"
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    if not image.save(buffer, output_format, 90 if output_format == "JPEG" else -1):
+        return mime_type, base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return output_mime, base64.b64encode(bytes(buffer.data())).decode("ascii")
+
+
 def recognize_image(profile, image_path: str | Path) -> list[dict[str, str]]:
     image_path = Path(image_path)
     mime_type = mimetypes.guess_type(image_path.name)[0] or "image/png"
-    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    # ponytail: 2560 px balances OCR readability and memory; raise only if recognition quality needs it.
+    mime_type, encoded = _image_for_request(image_path, mime_type)
     messages = [
         {"role": "system", "content": QUESTION_RECOGNITION_SYSTEM},
         {

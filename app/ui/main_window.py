@@ -5,7 +5,7 @@ from pathlib import Path
 import zipfile
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QCursor, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -452,22 +452,19 @@ class MainWindow(QMainWindow):
     def capture_screenshot(self):
         if self._screenshot_overlays:
             return
-        for screen in QGuiApplication.screens():
-            screenshot = screen.grabWindow(0)
-            if screenshot.isNull():
-                continue
-            overlay = ScreenshotOverlay(screen, screenshot)
-            overlay.captured.connect(self._screenshot_captured)
-            overlay.cancelled.connect(self._cancel_screenshot)
-            self._screenshot_overlays.append(overlay)
-        if not self._screenshot_overlays:
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        screenshot = screen.grabWindow(0) if screen else None
+        if screenshot is None or screenshot.isNull():
             QMessageBox.warning(self, "截图失败", "无法读取当前屏幕，请改用图片选择或粘贴。")
             return
-        for overlay in self._screenshot_overlays:
-            overlay.show()
-            overlay.raise_()
-        self._screenshot_overlays[0].activateWindow()
-        self._screenshot_overlays[0].setFocus()
+        overlay = ScreenshotOverlay(screen, screenshot)
+        overlay.captured.connect(self._screenshot_captured)
+        overlay.cancelled.connect(self._cancel_screenshot)
+        self._screenshot_overlays.append(overlay)
+        overlay.show()
+        overlay.raise_()
+        overlay.activateWindow()
+        overlay.setFocus()
 
     def _cancel_screenshot(self):
         for overlay in self._screenshot_overlays:
@@ -481,6 +478,7 @@ class MainWindow(QMainWindow):
             if not image.save(str(image_path), "PNG"):
                 QMessageBox.warning(self, "截图失败", "无法保存截图，请重试或改用图片选择。")
                 return
+            del image
             self.start_image_recognition(image_path, auto_recognize=True)
 
     def closeEvent(self, event):
