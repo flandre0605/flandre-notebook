@@ -40,6 +40,7 @@ from app.services import backup, attachments
 from app.ui.attachments_dialog import AttachmentsDialog
 from app.ui.history_dialog import HistoryDialog
 from app.ui.motion import AnimatedButton, ContentFade
+from app.ui.mini_practice_window import MiniPracticeWindow
 from app.ui.image_recognition_dialog import ImageRecognitionDialog
 from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog
 from app.ui.profiles_dialog import ProfilesDialog
@@ -488,6 +489,7 @@ class MainWindow(QMainWindow):
         self._screenshot_temp_dirs = []
         self._profiles_dialog = None
         self._practice_setup = None
+        self._mini_practice_window = None
         self._active_recognition_key = None
         self.screenshot_shortcut = str(
             QSettings().value("shortcuts/screenshot", "Ctrl+Alt+S")
@@ -556,6 +558,7 @@ class MainWindow(QMainWindow):
         page = self._pages.get(key)
         if page is None:
             return
+        self.restore_mini_practice()
         changed = self.page_stack.currentWidget() != page
         self.page_stack.setCurrentWidget(page)
         dialog = self._page_dialogs.get(key)
@@ -589,6 +592,11 @@ class MainWindow(QMainWindow):
         )
         header.addWidget(heading)
         header.addStretch()
+        if key == "practice_run":
+            self.mini_practice_button = AnimatedButton("小窗练习")
+            self.mini_practice_button.setObjectName("softButton")
+            self.mini_practice_button.clicked.connect(self.enter_mini_practice)
+            header.addWidget(self.mini_practice_button)
         header.addWidget(back_button)
         layout.addLayout(header)
         layout.addWidget(dialog, 1)
@@ -619,6 +627,7 @@ class MainWindow(QMainWindow):
         self._show_page("library")
 
     def closeEvent(self, event):
+        self.restore_mini_practice(show_main=False)
         self._motion.finish()
         self._cancel_screenshot()
         self._screenshot_hotkey.close()
@@ -956,6 +965,49 @@ class MainWindow(QMainWindow):
         dialog.rejected.connect(lambda: self._leave_dialog_page("practice_run"))
         self._show_page("practice_run")
         self.refresh()
+        if setup.mini_mode.isChecked():
+            self.enter_mini_practice()
+
+    def enter_mini_practice(self):
+        if self._mini_practice_window is not None:
+            self._mini_practice_window.show()
+            self._mini_practice_window.raise_()
+            return
+        practice = self._page_dialogs.get("practice_run")
+        if practice is None:
+            return
+        self._motion.finish()
+        self._page_containers["practice_run"].layout().removeWidget(practice)
+        mini = MiniPracticeWindow(practice, self)
+        self._mini_practice_window = mini
+        mini.restore_requested.connect(self.restore_mini_practice)
+        available = self.screen().availableGeometry()
+        mini.resize(480, min(640, available.height() - 64))
+        mini.move(max(available.left(), available.right() - mini.width() - 24), available.top() + 24)
+        self.hide()
+        mini.show()
+        practice.show()
+        mini.raise_()
+        mini.activateWindow()
+
+    def restore_mini_practice(self, show_main=True):
+        mini = self._mini_practice_window
+        if mini is None:
+            return
+        self._motion.finish()
+        self._mini_practice_window = None
+        practice = mini.take_practice()
+        container = self._page_containers["practice_run"]
+        practice.setParent(container)
+        practice.setWindowFlags(Qt.WindowType.Widget)
+        container.layout().addWidget(practice, 1)
+        mini.hide()
+        mini.deleteLater()
+        if show_main:
+            self.show()
+            self._show_page("practice_run")
+            self.raise_()
+            self.activateWindow()
 
     def show_history(self):
         if "history" not in self._pages:

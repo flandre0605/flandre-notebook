@@ -8,6 +8,7 @@ ICON_DIR = (Path(__file__).resolve().parents[2] / "assets" / "ui").as_posix()
 
 STYLE = """
 QMainWindow, QDialog { background: #fff8fb; }
+QWidget#miniPracticeWindow { background: #fff8fb; }
 QLabel { color: #503845; }
 QLabel#pageTitle { color: #422e3b; font-size: 27px; font-weight: 700; }
 QLabel#pageSubtitle, QLabel#muted { color: #806772; font-size: 12px; }
@@ -29,6 +30,7 @@ QFrame#separator { background: #ecd5df; border: none; }
 QFrame#formCard { background: white; border: 1px solid #ecd5df; border-radius: 14px; }
 QFrame#imageDropZone { background: #fffcfd; border: 2px dashed #ddb8c8; border-radius: 16px; }
 QFrame#imageDropZone[dragging="true"] { background: #fbe8f0; border-color: #b54b72; }
+QScrollArea#miniPracticeScroll { background: transparent; border: 1px solid #ecd5df; border-radius: 12px; }
 QTextBrowser#previewText { background: white; border: none; padding: 8px 4px; color: #503845; font-size: 14px; }
 QSplitter::handle { background: #f7e6ed; }
 QSplitter::handle:hover { background: #e3b3c5; }

@@ -34,6 +34,7 @@ class PracticeSetupDialog(QDialog):
         self.subject = QComboBox()
         self.subject.addItem("全部学科", "")
         self.random_order = QCheckBox("随机排列题目")
+        self.mini_mode = QCheckBox("以小窗模式开始（默认置顶）")
         self.use_library_filters = QCheckBox("沿用题库的搜索、题型和状态筛选")
         self.filter_hint = QLabel()
         self.filter_hint.setWordWrap(True)
@@ -49,6 +50,7 @@ class PracticeSetupDialog(QDialog):
         form.addRow("练习学科", self.subject)
         form.addRow("练习范围", self.mode)
         form.addRow("", self.random_order)
+        form.addRow("", self.mini_mode)
         form.addRow("", self.use_library_filters)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
