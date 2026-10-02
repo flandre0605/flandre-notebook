@@ -15,7 +15,6 @@ from PySide6.QtWidgets import QApplication
 
 from app.database import store
 from app.ui.main_window import MainWindow
-from app.ui.recognition_draft_dialog import RecognitionDraftDialog
 from app.ui.theme import ICON_DIR
 
 
@@ -38,10 +37,10 @@ def check(preview_directory=None):
             window = MainWindow()
             window.show()
 
-            def capture(name):
+            def capture(name, target=None):
                 QTest.qWait(220)
                 if preview_directory:
-                    assert window.grab().save(str(preview_directory / f"pink-{name}.png"))
+                    assert (target or window).grab().save(str(preview_directory / f"pink-{name}.png"))
 
             window.manage_profiles()
             settings = window._profiles_dialog
@@ -60,13 +59,15 @@ def check(preview_directory=None):
                     assert settings.rect().contains(field.geometry())
                 capture(f"settings-{width}")
             recognition = window.start_image_recognition()
+            assert recognition.isWindow() and window.page_stack.currentWidget() is window._pages["settings"]
             zone = recognition.drop_zone
             zone._set_dragging(True)
             assert zone.property("dragging") is True
             zone._set_dragging(False)
             assert zone.property("dragging") is False
             assert not recognition.recognize_button.isEnabled()
-            capture("recognition")
+            capture("recognition", recognition)
+            recognition.reject()
             window.start_practice()
             capture("practice")
             window._practice_setup.accept()
@@ -74,17 +75,17 @@ def check(preview_directory=None):
             run.user_answer.setPlainText("5")
             run.submit_answer()
             capture("practice-answer")
-            draft = RecognitionDraftDialog(None, Path(ICON_DIR).parent / "flandre_icon.png", [
+            recognition = window.start_image_recognition(Path(ICON_DIR).parent / "flandre_icon.png")
+            recognition._recognized([
                 dict(stem="已知 x + 3 = 8，求 x。", subject="数学", question_type="填空题",
                      answer="5", explanation="等式两边同时减去 3，得 x = 5。"),
                 dict(stem="已知 2x = 6，求 x。", subject="数学", answer="3"),
-            ], window)
-            window._embed_dialog_page("draft-preview", draft, "核对识题草稿", nav_key="recognition")
-            window._show_page("draft-preview")
+            ])
+            draft = recognition.draft_editor
             window.resize(1040, 680)
             app.processEvents()
             assert window.width() == 1040 and window.height() == 680
-            capture("draft")
+            capture("draft", recognition)
             assert draft.image.pixmap().width() <= draft.image.width()
             assert draft.image.pixmap().height() <= draft.image.height()
             assert len(draft.values()) == 2

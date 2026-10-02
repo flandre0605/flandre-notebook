@@ -13,7 +13,7 @@ from app.services import attachments
 from app.services.model_provider import recognize_image
 from app.ui.recognition_draft_dialog import RecognitionDraftDialog
 from app.ui.worker import Worker
-from app.ui.motion import AnimatedButton
+from app.ui.motion import AnimatedButton, ContentFade
 from app.ui.theme import ICON_DIR, MUTED, TEXT
 
 
@@ -112,6 +112,8 @@ class ImageRecognitionDialog(QDialog):
         self.setStyleSheet(parent.styleSheet() if parent else "")
         self.image_path: Path | None = None
         self._clipboard_temp_dirs = []
+        self._recognizing = False
+        self._dismissed = False
         self.drop_zone = ImageDropZone()
         self.drop_zone.image_dropped.connect(self.set_image)
         self.views = QStackedWidget()
@@ -132,6 +134,7 @@ class ImageRecognitionDialog(QDialog):
         self.recognize_button.clicked.connect(self.recognize)
         self.status = QLabel("选择或拖入题目图片，再选择视觉模型。")
         self.status.setObjectName("muted")
+        self.status.setWordWrap(True)
         heading = QLabel("整理纸上的错题")
         heading.setObjectName("pageTitle")
         heading.setStyleSheet("font-size:22px;font-weight:700;")
@@ -151,6 +154,8 @@ class ImageRecognitionDialog(QDialog):
         input_layout.addWidget(self.status)
         input_layout.addLayout(actions)
         self.views.addWidget(self.input_page)
+        self._motion = ContentFade(self)
+        self.views.currentChanged.connect(lambda _: self._motion.play(self.views.currentWidget()))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.views)
@@ -171,6 +176,8 @@ class ImageRecognitionDialog(QDialog):
             self.set_image(path)
 
     def paste_image(self):
+        if self._recognizing or self.views.currentWidget() is not self.input_page:
+            return
         clipboard = QApplication.clipboard()
         mime_data = clipboard.mimeData()
         if mime_data.hasImage():
@@ -195,6 +202,8 @@ class ImageRecognitionDialog(QDialog):
         self.status.setText("剪贴板里没有图片或图片文件。")
 
     def set_image(self, path: str):
+        if self._recognizing or self.views.currentWidget() is not self.input_page:
+            return
         self.image_path = None
         self.recognize_button.setEnabled(False)
         self.drop_zone.clear_image()
@@ -208,6 +217,8 @@ class ImageRecognitionDialog(QDialog):
         self.recognize_button.setEnabled(bool(self.profiles))
 
     def recognize(self):
+        if self._recognizing or self._dismissed or self.views.currentWidget() is not self.input_page:
+            return
         if self.image_path is None:
             self.status.setText("请先拖入、粘贴或选择一张题目图片。")
             return
@@ -216,9 +227,8 @@ class ImageRecognitionDialog(QDialog):
         if profile is None:
             self.status.setText("没有可用的视觉模型，请先到设置中启用一个视觉模型。")
             return
-        self.recognize_button.setEnabled(False)
-        self.choose_button.setEnabled(False)
-        self.profile.setEnabled(False)
+        self._recognizing = True
+        self._set_input_enabled(False)
         self.status.setText(f"正在使用 {profile['name']} 识别图片…")
         image_path = self.image_path
         self.worker = Worker(lambda: recognize_image(profile, image_path))
@@ -227,9 +237,11 @@ class ImageRecognitionDialog(QDialog):
         QThreadPool.globalInstance().start(self.worker)
 
     def _recognized(self, draft):
-        self.recognize_button.setEnabled(True)
-        self.choose_button.setEnabled(True)
-        self.profile.setEnabled(bool(self.profiles))
+        self._recognizing = False
+        if self._dismissed:
+            self.done(self._pending_result)
+            return
+        self._set_input_enabled(True)
         self.status.setText("识别完成 · 请核对草稿")
         editor = RecognitionDraftDialog(None, self.image_path, draft, self)
         editor.setWindowFlags(Qt.WindowType.Widget)
@@ -238,6 +250,7 @@ class ImageRecognitionDialog(QDialog):
         self.draft_editor = editor
         self.views.addWidget(editor)
         self.views.setCurrentWidget(editor)
+        self.resize(max(980, self.width()), max(700, self.height()))
 
     def _return_to_input(self, editor):
         self.views.setCurrentWidget(self.input_page)
@@ -269,9 +282,28 @@ class ImageRecognitionDialog(QDialog):
         self.accept()
 
     def _failed(self, error):
-        self.recognize_button.setEnabled(True)
-        self.choose_button.setEnabled(True)
-        self.profile.setEnabled(bool(self.profiles))
+        self._recognizing = False
+        if self._dismissed:
+            self.done(self._pending_result)
+            return
+        self._set_input_enabled(True)
         self.status.setText(f"识题失败：{error}")
         details = getattr(error, "raw_response", "")
         self.status.setToolTip(details or str(error))
+
+    def _set_input_enabled(self, enabled):
+        self.recognize_button.setEnabled(enabled and bool(self.profiles))
+        self.choose_button.setEnabled(enabled)
+        self.paste_button.setEnabled(enabled)
+        self.profile.setEnabled(enabled and bool(self.profiles))
+        self.drop_zone.setAcceptDrops(enabled)
+
+    def done(self, result):
+        self._motion.finish()
+        self._dismissed = True
+        if self._recognizing:
+            # ponytail: urllib 请求不能中断；先隐藏，返回/超时后释放截图与窗口。
+            self._pending_result = result
+            self.hide()
+            return
+        super().done(result)

@@ -232,7 +232,6 @@ class MainWindow(QMainWindow):
 
         recognition_icon = "M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"
         add_nav("我的题库", self.show_library, "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z", page_key="library", active=True)
-        add_nav("AI 识题", self.recognize_selected, recognition_icon, page_key="recognition")
         add_nav("开始练习", self.start_practice, "M7 4l13 8-13 8z", page_key="practice")
         add_nav("练习记录", self.show_history, "M21 12a9 9 0 1 1-18 0 9 9 0 1 1 18 0 M12 7v5l3 2", page_key="history")
         add_nav("英语背单词", self.show_vocabulary, "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3z M12 6v16 M6 9h3 M15 9h3", page_key="vocabulary")
@@ -275,12 +274,12 @@ class MainWindow(QMainWindow):
         self.add_button = AnimatedButton("＋  新增题目")
         self.add_button.setObjectName("primaryButton")
         self.add_button.setMinimumHeight(34)
-        self.recognize_button = AnimatedButton("AI 识题")
+        self.recognize_button = AnimatedButton("截图识题")
         self.recognize_button.setIcon(_line_icon(recognition_icon, ACCENT))
         self.recognize_button.setObjectName("softButton")
         self.recognize_button.setMinimumHeight(34)
         self.add_button.clicked.connect(self.add_question)
-        self.recognize_button.clicked.connect(self.recognize_selected)
+        self.recognize_button.clicked.connect(self.capture_screenshot)
         page_header = QHBoxLayout()
         page_header.addLayout(title_block)
         page_header.addStretch()
@@ -483,16 +482,14 @@ class MainWindow(QMainWindow):
         self._page_containers = {"library": page}
         self._page_dialogs = {}
         self._page_nav_keys = {"library": "library"}
-        self._page_number = 0
         shell.addWidget(self.page_stack, 1)
         self.setCentralWidget(central)
         self.statusBar().showMessage("本地模式 · 题库数据保存在此设备")
         self._screenshot_overlays = []
-        self._screenshot_temp_dirs = []
         self._profiles_dialog = None
         self._practice_setup = None
         self._mini_practice_window = None
-        self._active_recognition_key = None
+        self._recognition_dialogs = []
         self.screenshot_shortcut = str(
             QSettings().value("shortcuts/screenshot", "Ctrl+Alt+S")
         )
@@ -534,14 +531,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "截图失败", "无法保存截图，请重试或改用图片选择。")
             return
         del image
-        self._screenshot_temp_dirs.append(directory)
         dialog = self.start_image_recognition(image_path, auto_recognize=True)
-        dialog.finished.connect(lambda _result, temp=directory: self._cleanup_screenshot(temp))
-
-    def _cleanup_screenshot(self, directory):
-        directory.cleanup()
-        if directory in self._screenshot_temp_dirs:
-            self._screenshot_temp_dirs.remove(directory)
+        dialog._clipboard_temp_dirs.append(directory)
 
     def set_screenshot_shortcut(self, shortcut):
         self._screenshot_hotkey.close()
@@ -638,9 +629,8 @@ class MainWindow(QMainWindow):
         self._motion.finish()
         self._cancel_screenshot()
         self._screenshot_hotkey.close()
-        for directory in self._screenshot_temp_dirs:
-            directory.cleanup()
-        self._screenshot_temp_dirs.clear()
+        for dialog in list(self._recognition_dialogs):
+            dialog.reject()
         super().closeEvent(event)
 
     def refresh(self):
@@ -863,35 +853,35 @@ class MainWindow(QMainWindow):
         dialog.rejected.connect(lambda: self._leave_dialog_page("attachments", back_key))
         self._show_page("attachments")
 
-    def recognize_selected(self):
-        self.start_image_recognition()
-
     def start_image_recognition(self, image_path=None, auto_recognize=False):
-        if image_path is None and self._active_recognition_key in self._pages:
-            self._show_page(self._active_recognition_key)
-            return self._page_dialogs[self._active_recognition_key]
+        self.restore_mini_practice()
+        if self.isMinimized():
+            self.showNormal()
+        if "vocabulary" in self._pages:
+            self.vocabulary_page.speech.stop()
+        if image_path is None:
+            for current in reversed(self._recognition_dialogs):
+                if current.isVisible():
+                    current.raise_()
+                    current.activateWindow()
+                    return current
         dialog = ImageRecognitionDialog(image_path, self, auto_recognize=auto_recognize)
-        self._page_number += 1
-        key = f"recognition_{self._page_number}"
-        self._active_recognition_key = key
-        self._embed_dialog_page(key, dialog, "AI 图片识题", nav_key="recognition")
-        dialog.views.currentChanged.connect(
-            lambda _index: self._motion.play(dialog.views.currentWidget())
-        )
+        self._recognition_dialogs.append(dialog)
         dialog.accepted.connect(self._refresh_filter_options)
         dialog.accepted.connect(self.refresh)
-        dialog.accepted.connect(lambda: self._leave_dialog_page(key))
-        dialog.rejected.connect(lambda: self._leave_dialog_page(key))
-        dialog.finished.connect(lambda _result: self._cleanup_finished_recognition(key))
-        self._show_page(key)
+        dialog.finished.connect(lambda _result: self._cleanup_finished_recognition(dialog))
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
         return dialog
 
-    def _cleanup_finished_recognition(self, key):
-        if self.page_stack.currentWidget() == self._pages.get(key):
-            self._show_page("library")
-        if self._active_recognition_key == key:
-            self._active_recognition_key = None
-        self._discard_page(key)
+    def _cleanup_finished_recognition(self, dialog):
+        if dialog in self._recognition_dialogs:
+            self._recognition_dialogs.remove(dialog)
+        for directory in dialog._clipboard_temp_dirs:
+            directory.cleanup()
+        dialog._clipboard_temp_dirs.clear()
+        dialog.deleteLater()
 
     def dragEnterEvent(self, event):
         if any(url.isLocalFile() for url in event.mimeData().urls()):
