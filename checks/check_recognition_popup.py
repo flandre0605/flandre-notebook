@@ -110,6 +110,11 @@ def check():
                 wait_until(lambda: "HTTP 502" in popup.status.text())
                 assert popup.isVisible() and popup.recognize_button.isEnabled() and popup.paste_button.isEnabled()
                 assert popup.image_path == external and external.exists()
+                assert popup.details_button.isVisible()
+                popup.details_button.click()
+                assert popup.response_details.isVisible() and popup.response_details.toPlainText() == "details"
+                popup.details_button.click()
+                assert not popup.response_details.isVisible()
                 assert not any(key.startswith("recognition") for key in window._pages)
                 popup.reject()
                 assert not window._recognition_dialogs and len(store.list_questions()) == 2

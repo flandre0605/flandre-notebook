@@ -5,7 +5,7 @@ from PySide6.QtCore import QThreadPool, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QVBoxLayout, QWidget, QPlainTextEdit,
 )
 
 from app.database import store
@@ -135,6 +135,14 @@ class ImageRecognitionDialog(QDialog):
         self.status = QLabel("选择或拖入题目图片，再选择视觉模型。")
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
+        self.response_details = QPlainTextEdit()
+        self.response_details.setReadOnly(True)
+        self.response_details.setMaximumHeight(160)
+        self.response_details.setPlaceholderText("模型原始响应")
+        self.response_details.hide()
+        self.details_button = AnimatedButton("查看原始响应")
+        self.details_button.hide()
+        self.details_button.clicked.connect(self._toggle_details)
         heading = QLabel("整理纸上的错题")
         heading.setObjectName("pageTitle")
         heading.setStyleSheet("font-size:22px;font-weight:700;")
@@ -152,6 +160,8 @@ class ImageRecognitionDialog(QDialog):
         input_layout.addWidget(subtitle)
         input_layout.addWidget(self.drop_zone, 1)
         input_layout.addWidget(self.status)
+        input_layout.addWidget(self.details_button)
+        input_layout.addWidget(self.response_details)
         input_layout.addLayout(actions)
         self.views.addWidget(self.input_page)
         self._motion = ContentFade(self)
@@ -228,6 +238,9 @@ class ImageRecognitionDialog(QDialog):
             self.status.setText("没有可用的视觉模型，请先到设置中启用一个视觉模型。")
             return
         self._recognizing = True
+        self.details_button.hide()
+        self.response_details.hide()
+        self.response_details.clear()
         self._set_input_enabled(False)
         self.status.setText(f"正在使用 {profile['name']} 识别图片…")
         image_path = self.image_path
@@ -295,6 +308,15 @@ class ImageRecognitionDialog(QDialog):
         self.status.setText(f"识题失败：{error}")
         details = getattr(error, "raw_response", "")
         self.status.setToolTip(details or str(error))
+        self.response_details.setPlainText(details)
+        self.response_details.hide()
+        self.details_button.setText("查看原始响应")
+        self.details_button.setVisible(bool(details))
+
+    def _toggle_details(self):
+        visible = self.response_details.isHidden()
+        self.response_details.setVisible(visible)
+        self.details_button.setText("收起原始响应" if visible else "查看原始响应")
 
     def _set_input_enabled(self, enabled):
         self.recognize_button.setEnabled(enabled and bool(self.profiles))

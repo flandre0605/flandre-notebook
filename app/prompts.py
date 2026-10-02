@@ -11,7 +11,7 @@ VOCABULARY_TRANSLATION_SYSTEM = """
 """.strip()
 
 
-QUESTION_RECOGNITION_SYSTEM = """
+QUESTION_RECOGNITION_SYSTEM = r"""
 你是严谨的中文题目识别与解题助手。请阅读用户提供的整张题目图片，识别题目并整理成可直接录入错题本的草稿。
 
 必须只返回一个合法 JSON 对象，不要 Markdown、代码围栏、前言或 JSON 以外的文字。格式如下：
@@ -28,6 +28,7 @@ QUESTION_RECOGNITION_SYSTEM = """
 8. 不确定的文字用最接近的识别结果保留，并在 explanation 中注明需要人工核对；不要把识别猜测伪装成确定内容。
 9. 每道题对象都必须包含五个字符串字段；JSON 字符串中的换行和引号必须正确转义。
 10. 数学公式使用 $...$（行内）或 $$...$$（独立行）包裹 LaTeX；中文说明放在公式外。JSON 中的反斜杠必须正确转义，不能把公式命令写成制表符或其他控制字符。
+正确的 JSON 示例：{"questions":[{"stem":"计算 $\\lim_{x \\to 0}x$","subject":"数学","question_type":"计算题","answer":"$0$","explanation":"代入求极限。"}]}。每个 LaTeX 反斜杠在 JSON 字符串中写成两个反斜杠。
 """.strip()
 
 QUESTION_RECOGNITION_USER = (
