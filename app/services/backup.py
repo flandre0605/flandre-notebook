@@ -117,6 +117,10 @@ def restore_backup(source: str | Path) -> Path:
         if version < store.SCHEMA_VERSION:
             store.initialize(staged_db)
         with closing(sqlite3.connect(staged_db)) as database:
+            database.execute(
+                """SELECT id, word, meaning, phonetic, example, book, review_count,
+                          streak, due_at, last_reviewed_at FROM vocabulary_words LIMIT 0"""
+            )
             for (relative_path,) in database.execute("SELECT relative_path FROM attachments"):
                 relative = PurePosixPath(relative_path)
                 if (

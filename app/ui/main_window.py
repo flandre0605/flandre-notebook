@@ -46,6 +46,7 @@ from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog
 from app.ui.profiles_dialog import ProfilesDialog
 from app.ui.screenshot import GlobalScreenshotHotkey, ScreenshotOverlay
 from app.ui.theme import ACCENT, MUTED, STYLE, TEXT
+from app.ui.vocabulary_page import VocabularyPage
 
 
 def _line_icon(path, color=MUTED):
@@ -234,6 +235,7 @@ class MainWindow(QMainWindow):
         add_nav("AI 识题", self.recognize_selected, recognition_icon, page_key="recognition")
         add_nav("开始练习", self.start_practice, "M7 4l13 8-13 8z", page_key="practice")
         add_nav("练习记录", self.show_history, "M21 12a9 9 0 1 1-18 0 9 9 0 1 1 18 0 M12 7v5l3 2", page_key="history")
+        add_nav("英语背单词", self.show_vocabulary, "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3z M12 6v16 M6 9h3 M15 9h3", page_key="vocabulary")
         sidebar_layout.addSpacing(18)
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
@@ -1019,6 +1021,18 @@ class MainWindow(QMainWindow):
         self.history_page.refresh()
         self._show_page("history")
 
+    def show_vocabulary(self):
+        if "vocabulary" not in self._pages:
+            self.vocabulary_page = VocabularyPage(self)
+            self._embed_dialog_page("vocabulary", self.vocabulary_page, "英语背单词",
+                                    nav_key="vocabulary", persistent=True)
+            self.vocabulary_page.rejected.connect(lambda: self._show_page("library"))
+            self.vocabulary_page.content_changed.connect(
+                lambda: self._motion.play(self.vocabulary_page.views.currentWidget())
+            )
+        self.vocabulary_page.refresh()
+        self._show_page("vocabulary")
+
     def manage_profiles(self):
         if self._profiles_dialog is None:
             self._profiles_dialog = ProfilesDialog(self)
@@ -1069,4 +1083,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "恢复失败", str(error))
             return
         self.refresh()
+        if "vocabulary" in self._pages:
+            self.vocabulary_page.reset()
         QMessageBox.information(self, "恢复完成", f"当前数据已恢复。恢复前备份保存在：\n{recovery}")

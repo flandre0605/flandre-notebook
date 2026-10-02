@@ -7,7 +7,7 @@ from typing import Iterator
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = PROJECT_ROOT / "data"
 DATABASE_PATH = DATA_DIR / "questions.db"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 @contextmanager
@@ -120,6 +120,27 @@ def initialize(database_path: Path = DATABASE_PATH) -> None:
                 "ALTER TABLE practice_attempts ADD COLUMN user_answer TEXT NOT NULL DEFAULT ''"
             )
             connection.execute("PRAGMA user_version = 5")
+            version = 5
+        if version < 6:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """CREATE TABLE vocabulary_words (
+                    id INTEGER PRIMARY KEY,
+                    word TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    meaning TEXT NOT NULL,
+                    phonetic TEXT NOT NULL DEFAULT '',
+                    example TEXT NOT NULL DEFAULT '',
+                    book TEXT NOT NULL DEFAULT '',
+                    review_count INTEGER NOT NULL DEFAULT 0 CHECK (review_count >= 0),
+                    streak INTEGER NOT NULL DEFAULT 0 CHECK (streak >= 0),
+                    due_at TEXT,
+                    last_reviewed_at TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )"""
+            )
+            connection.execute("CREATE INDEX idx_vocabulary_due_at ON vocabulary_words(due_at)")
+            connection.execute("PRAGMA user_version = 6")
 
 
 def _question_conditions(

@@ -9,6 +9,8 @@ ICON_DIR = (Path(__file__).resolve().parents[2] / "assets" / "ui").as_posix()
 STYLE = """
 QMainWindow, QDialog { background: #fff8fb; }
 QWidget#miniPracticeWindow { background: #fff8fb; }
+QWidget#wordStudyCanvas { background: #fff8fb; }
+QScrollArea#wordStudyScroll { background: transparent; border: none; }
 QLabel { color: #503845; }
 QLabel#pageTitle { color: #422e3b; font-size: 27px; font-weight: 700; }
 QLabel#pageSubtitle, QLabel#muted { color: #806772; font-size: 12px; }
@@ -23,6 +25,8 @@ QLabel#badge { background: #fbe8f0; color: #9f4565; border-radius: 10px; padding
 QLabel#attachmentPreview { background: #fff4f8; border: 1px solid #ecd5df; border-radius: 12px; color: #806772; }
 QLabel#practiceStem { background: white; border: 1px solid #ecd5df; border-radius: 14px; padding: 20px; color: #503845; font-size: 17px; }
 QLabel#practiceSolution { background: #fff4f8; border: 1px solid #ecd5df; border-radius: 12px; padding: 14px; color: #503845; }
+QLabel#wordFace { color: #9f4565; font-size: 30px; font-weight: 700; padding: 18px 0; }
+QLabel#wordMeaning { color: #503845; font-size: 17px; padding: 12px; background: #fff4f8; border-radius: 12px; }
 QFrame#sidebar { background: #fff0f5; border-right: 1px solid #ecd5df; }
 QFrame#workspaceHeader { background: #fffcfd; border-bottom: 1px solid #ecd5df; }
 QFrame#libraryPanel, QFrame#detailPanel { background: #ffffff; }
