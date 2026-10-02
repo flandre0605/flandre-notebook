@@ -1,14 +1,15 @@
 from uuid import uuid4
 
-from PySide6.QtCore import QSettings, Qt, QThreadPool
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QSettings, Qt, QThreadPool, QUrl
+from PySide6.QtGui import QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QKeySequenceEdit, QLineEdit, QListWidget, QMessageBox, QSpinBox, QVBoxLayout,
+    QKeySequenceEdit, QLineEdit, QListWidget, QMessageBox, QSpinBox, QVBoxLayout, QApplication,
 )
 
 from app.database import store
 from app.services import credentials
+from app.services import deepseek_web
 from app.services.model_provider import list_models, test_profile, validate_profile
 from app.ui.screenshot import GlobalScreenshotHotkey
 from app.ui.motion import AnimatedButton
@@ -67,6 +68,13 @@ class ProfilesDialog(QDialog):
         self.new_button.clicked.connect(self._new)
         self.save_button.clicked.connect(self._save)
         self.delete_button.clicked.connect(self._delete)
+        self.web_start_button = AnimatedButton("启动网页版服务")
+        self.web_start_button.clicked.connect(self._start_web)
+        self.web_manage_button = AnimatedButton("打开管理页")
+        self.web_manage_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(deepseek_web.ORIGIN)))
+        self.web_password_button = AnimatedButton("复制管理密码")
+        self.web_password_button.clicked.connect(self._copy_web_password)
+        QApplication.instance().aboutToQuit.connect(deepseek_web.shutdown)
 
         form = QFormLayout()
         form.setVerticalSpacing(14)
@@ -109,6 +117,10 @@ class ProfilesDialog(QDialog):
         left.addWidget(list_title)
         left.addWidget(self.empty_hint)
         left.addWidget(self.profiles, 1)
+        left.addWidget(QLabel("DeepSeek 网页版 · 本机服务"))
+        left.addWidget(self.web_start_button)
+        left.addWidget(self.web_manage_button)
+        left.addWidget(self.web_password_button)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(24)
@@ -121,6 +133,46 @@ class ProfilesDialog(QDialog):
         self.timeout.valueChanged.connect(self._mark_edited)
         self.vision.stateChanged.connect(self._mark_edited)
         self.enabled.stateChanged.connect(self._mark_edited)
+
+    def _start_web(self):
+        self.web_start_button.setEnabled(False)
+        self.connection_status.setText("正在启动本地服务…")
+        self.web_worker = Worker(deepseek_web.start)
+        self.web_worker.signals.succeeded.connect(self._web_started)
+        self.web_worker.signals.failed.connect(self._web_failed)
+        QThreadPool.globalInstance().start(self.web_worker)
+
+    def _web_started(self, key):
+        self.web_start_button.setEnabled(True)
+        index = next((i for i, row in enumerate(self.rows) if row["name"] == "DeepSeek 网页版（本机）"
+                      and row["base_url"] == f"{deepseek_web.ORIGIN}/v1"), None)
+        if index is None:
+            self._new()
+        else:
+            self.profiles.setCurrentRow(index)
+        self.name.setText("DeepSeek 网页版（本机）")
+        self.base_url.setText(f"{deepseek_web.ORIGIN}/v1")
+        self.endpoint_path.setText("/chat/completions")
+        self.model.setEditText("v4.1flash")
+        self.api_key.setText(key)
+        self.timeout.setValue(180)
+        self.vision.setChecked(True)
+        self.enabled.setChecked(True)
+        if self._save():
+            self.connection_status.setText("本地服务已启动，尚未验证网页账号。打开管理页，用户名 notebook；点击复制管理密码登录并添加网页 Token。")
+
+    def _web_failed(self, error):
+        self.web_start_button.setEnabled(True)
+        self.connection_status.setText(str(error))
+
+    def _copy_web_password(self):
+        try:
+            if not credentials.has_api_key(deepseek_web.KEY_REF):
+                raise RuntimeError("请先启动网页版服务。")
+            QApplication.clipboard().setText(credentials.get_api_key(deepseek_web.KEY_REF))
+            self.connection_status.setText("管理密码已复制，管理页用户名：notebook。此密码用于本地服务。")
+        except Exception as error:
+            self.connection_status.setText(str(error))
 
     def _apply_screenshot_shortcut(self):
         sequence = self.screenshot_shortcut.keySequence()

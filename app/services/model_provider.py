@@ -207,6 +207,13 @@ def _request(profile, messages, max_tokens=1200, json_mode=False) -> str:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         error_body = error.read(2000).decode("utf-8", errors="replace").lower()
+        if (error.code in {401, 503} and any(marker in error_body for marker in (
+                "no tokens available", "no auth token. add via dashboard"))
+                and urllib.parse.urlsplit(url).hostname in {"localhost", "127.0.0.1", "::1"}):
+            raise ProviderError(
+                "本地网页版服务尚未配置可用账号。请到设置中打开管理页，添加你自己的网页 Token。",
+                error_body,
+            ) from None
         if json_mode and error.code in {400, 422} and "response_format" in error_body:
             raise ProviderError(
                 "中转站不支持 JSON 模式，正在使用提示词约束格式重试。",
