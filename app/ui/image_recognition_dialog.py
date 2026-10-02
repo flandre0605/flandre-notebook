@@ -5,7 +5,7 @@ from PySide6.QtCore import QThreadPool, QTimer, Qt, Signal
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from app.database import store
@@ -13,6 +13,7 @@ from app.services import attachments
 from app.services.model_provider import recognize_image
 from app.ui.recognition_draft_dialog import RecognitionDraftDialog
 from app.ui.worker import Worker
+from app.ui.motion import AnimatedButton
 
 
 class ImageDropZone(QFrame):
@@ -112,13 +113,13 @@ class ImageRecognitionDialog(QDialog):
         self.profiles = [profile for profile in self.profiles if profile["vision_enabled"]]
         for profile in self.profiles:
             self.profile.addItem(f"{profile['name']} · {profile['model_id']}", profile["id"])
-        self.choose_button = QPushButton("选择图片…")
+        self.choose_button = AnimatedButton("选择图片…")
         self.choose_button.clicked.connect(self.choose_image)
-        self.paste_button = QPushButton("粘贴图片（Ctrl+V）")
+        self.paste_button = AnimatedButton("粘贴图片（Ctrl+V）")
         self.paste_button.clicked.connect(self.paste_image)
         paste_shortcut = QShortcut(QKeySequence.StandardKey.Paste, self)
         paste_shortcut.activated.connect(self.paste_image)
-        self.recognize_button = QPushButton("开始识题")
+        self.recognize_button = AnimatedButton("开始识题")
         self.recognize_button.setObjectName("primaryButton")
         self.recognize_button.clicked.connect(self.recognize)
         self.status = QLabel("选择或拖入题目图片，再选择视觉模型。")

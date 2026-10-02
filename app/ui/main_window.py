@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
     QStackedWidget,
     QSplitter,
     QTabWidget,
@@ -37,6 +36,7 @@ from app.database import store
 from app.services import backup, attachments
 from app.ui.attachments_dialog import AttachmentsDialog
 from app.ui.history_dialog import HistoryDialog
+from app.ui.motion import AnimatedButton, ContentFade
 from app.ui.image_recognition_dialog import ImageRecognitionDialog
 from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog
 from app.ui.profiles_dialog import ProfilesDialog
@@ -79,10 +79,13 @@ QPushButton {
     border-radius: 8px; padding: 8px 13px; font-weight: 600;
 }
 QPushButton:hover { background: #f6f8fc; border-color: #cbd5e3; }
+QPushButton:pressed { background: #e8eef9; border-color: #9bb1da; }
 QPushButton:disabled { color: #aab3c0; background: #f7f8fa; }
 QPushButton#primaryButton { background: #4369df; color: #ffffff; border-color: #4369df; }
 QPushButton#primaryButton:hover { background: #365bcf; }
+QPushButton#primaryButton:pressed { background: #2949af; border-color: #2949af; }
 QPushButton#softButton { background: #eef3ff; color: #3759b2; border-color: #e2eaff; }
+QPushButton#softButton:pressed { background: #dce6ff; }
 QPushButton#dangerButton { color: #bd5962; }
 QPushButton#navButton, QPushButton#navButtonActive, QPushButton#navUtility {
     text-align: left; border: 0; padding: 11px 13px; font-weight: 500;
@@ -90,6 +93,7 @@ QPushButton#navButton, QPushButton#navButtonActive, QPushButton#navUtility {
 QPushButton#navButton, QPushButton#navUtility { background: transparent; color: #67758a; }
 QPushButton#navButton:hover, QPushButton#navUtility:hover { background: #f4f6fa; color: #2c3a52; }
 QPushButton#navButtonActive { background: #edf2ff; color: #365dcc; font-weight: 700; }
+QPushButton#navButton:pressed, QPushButton#navUtility:pressed, QPushButton#navButtonActive:pressed { background: #dfe8fc; }
 QTableWidget {
     background: #ffffff; alternate-background-color: #fafbfd;
     border: none; color: #344158; selection-background-color: #edf2ff;
@@ -209,6 +213,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1040, 680)
         self.setAcceptDrops(True)
         self.setStyleSheet(STYLE)
+        self._motion = ContentFade(self)
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
@@ -244,7 +249,7 @@ class MainWindow(QMainWindow):
         self._navigation_buttons = []
 
         def add_nav(text, callback, icon_path, page_key=None, active=False, utility=False):
-            button = QPushButton(text)
+            button = AnimatedButton(text)
             button.setIcon(_line_icon(icon_path))
             button.setIconSize(QSize(18, 18))
             button.setObjectName(
@@ -297,10 +302,10 @@ class MainWindow(QMainWindow):
         title_block.addWidget(title)
         title_block.addWidget(subtitle)
 
-        self.add_button = QPushButton("＋  新增题目")
+        self.add_button = AnimatedButton("＋  新增题目")
         self.add_button.setObjectName("primaryButton")
         self.add_button.setMinimumHeight(34)
-        self.recognize_button = QPushButton("AI 识题")
+        self.recognize_button = AnimatedButton("AI 识题")
         self.recognize_button.setIcon(_line_icon(recognition_icon, "#3759b2"))
         self.recognize_button.setObjectName("softButton")
         self.recognize_button.setMinimumHeight(34)
@@ -354,10 +359,10 @@ class MainWindow(QMainWindow):
         ):
             self.state_filter.addItem(label, value)
 
-        self.attach_button = QPushButton("图片附件")
-        self.edit_button = QPushButton("编辑题目")
+        self.attach_button = AnimatedButton("图片附件")
+        self.edit_button = AnimatedButton("编辑题目")
         self.edit_button.setObjectName("softButton")
-        self.delete_button = QPushButton("删除")
+        self.delete_button = AnimatedButton("删除")
         self.delete_button.setObjectName("dangerButton")
         self.attach_button.clicked.connect(self.manage_attachments)
         self.edit_button.clicked.connect(self.edit_question)
@@ -398,7 +403,7 @@ class MainWindow(QMainWindow):
         self.empty_title = QLabel("从第一道题开始")
         self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_title.setStyleSheet("font-size:18px;font-weight:700;color:#273449;")
-        self.empty_action = QPushButton("＋  新增题目")
+        self.empty_action = AnimatedButton("＋  新增题目")
         self.empty_action.setObjectName("primaryButton")
         self.empty_action.clicked.connect(self._empty_action)
         empty_card = QFrame()
@@ -457,6 +462,9 @@ class MainWindow(QMainWindow):
             browser.setOpenLinks(False)
         self.preview_tabs.addTab(self.preview_stem, "题目内容")
         self.preview_tabs.addTab(self.preview_solution, "答案与解析")
+        self.preview_tabs.currentChanged.connect(
+            lambda _index: self._motion.play(self.preview_tabs.currentWidget())
+        )
         self._preview_id = None
         detail_actions = QHBoxLayout()
         detail_actions.addWidget(self.edit_button)
@@ -579,6 +587,7 @@ class MainWindow(QMainWindow):
         page = self._pages.get(key)
         if page is None:
             return
+        changed = self.page_stack.currentWidget() != page
         self.page_stack.setCurrentWidget(page)
         dialog = self._page_dialogs.get(key)
         if dialog is not None:
@@ -589,6 +598,8 @@ class MainWindow(QMainWindow):
             button.setObjectName("navButtonActive" if active else "navUtility" if page_key == "settings" else "navButton")
             button.style().unpolish(button)
             button.style().polish(button)
+        if changed:
+            self._motion.play(page)
 
     def _embed_dialog_page(
         self, key, dialog, title, back_key="library", nav_key=None, persistent=False
@@ -603,7 +614,7 @@ class MainWindow(QMainWindow):
         header = QHBoxLayout()
         heading = QLabel(title)
         heading.setObjectName("pageTitle")
-        back_button = QPushButton("← 返回")
+        back_button = AnimatedButton("← 返回")
         back_button.clicked.connect(
             lambda: self._show_page(back_key) if persistent else dialog.reject()
         )
@@ -639,6 +650,7 @@ class MainWindow(QMainWindow):
         self._show_page("library")
 
     def closeEvent(self, event):
+        self._motion.finish()
         self._cancel_screenshot()
         self._screenshot_hotkey.close()
         for directory in self._screenshot_temp_dirs:
@@ -730,6 +742,7 @@ class MainWindow(QMainWindow):
         self._update_preview(question_id)
 
     def _update_preview(self, question_id):
+        changed = question_id != self._preview_id
         question = None
         error_message = "在左侧选择题目，即可在这里阅读题干。"
         if question_id is not None:
@@ -759,6 +772,8 @@ class MainWindow(QMainWindow):
         self.preview_solution.setHtml(
             f"<h3>参考答案</h3><p>{answer}</p><br><h3>解析</h3><p>{explanation}</p>"
         )
+        if changed:
+            self._motion.play(self.preview_tabs.currentWidget())
 
     def _refresh_filter_options(self):
         selected_subject = self.subject_filter.currentData()
@@ -875,6 +890,9 @@ class MainWindow(QMainWindow):
         key = f"recognition_{self._page_number}"
         self._active_recognition_key = key
         self._embed_dialog_page(key, dialog, "AI 图片识题", nav_key="recognition")
+        dialog.views.currentChanged.connect(
+            lambda _index: self._motion.play(dialog.views.currentWidget())
+        )
         dialog.accepted.connect(self._refresh_filter_options)
         dialog.accepted.connect(self.refresh)
         dialog.accepted.connect(lambda: self._leave_dialog_page(key))
@@ -961,6 +979,7 @@ class MainWindow(QMainWindow):
         self._embed_dialog_page(
             "practice_run", dialog, "练习中", nav_key="practice"
         )
+        dialog.content_changed.connect(lambda: self._motion.play(dialog))
         dialog.images_requested.connect(
             lambda question_id: self._show_attachments(question_id, "practice_run")
         )

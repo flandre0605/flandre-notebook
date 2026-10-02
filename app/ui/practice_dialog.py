@@ -12,12 +12,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
     QVBoxLayout,
 )
 
 from app.database import store
 from app.services.grading import grade_answer
+from app.ui.motion import AnimatedButton
 
 
 class PracticeSetupDialog(QDialog):
@@ -102,6 +102,7 @@ class PracticeSetupDialog(QDialog):
 
 class PracticeDialog(QDialog):
     images_requested = Signal(int)
+    content_changed = Signal()
 
     def __init__(self, questions, parent=None):
         super().__init__(parent)
@@ -123,13 +124,13 @@ class PracticeDialog(QDialog):
             "background: white; border: 1px solid #e7ebf2; border-radius: 12px;"
             " padding: 20px; font-size: 17px; color: #263248;"
         )
-        self.images_button = QPushButton("查看题目图片")
+        self.images_button = AnimatedButton("查看题目图片")
         self.images_button.clicked.connect(self.show_images)
 
         self.user_answer = QPlainTextEdit()
         self.user_answer.setPlaceholderText("写下你的思路或答案；点击“记录并继续”后会保存在练习记录中")
         self.user_answer.setMaximumHeight(100)
-        self.reveal_button = QPushButton("提交并查看答案")
+        self.reveal_button = AnimatedButton("提交并查看答案")
         self.reveal_button.setObjectName("primaryButton")
         self.reveal_button.clicked.connect(self.submit_answer)
 
@@ -159,7 +160,7 @@ class PracticeDialog(QDialog):
         details.addRow("作答结果", self.result_choice)
         details.addRow("掌握程度", self.mastery)
         details.addRow("错因", self.mistake_reason)
-        self.record_button = QPushButton("记录并继续")
+        self.record_button = AnimatedButton("记录并继续")
         self.record_button.setObjectName("primaryButton")
         self.record_button.clicked.connect(self.record_and_continue)
 
@@ -206,6 +207,7 @@ class PracticeDialog(QDialog):
             QMessageBox.critical(self, "读取失败", f"无法读取题目图片：\n{error}")
             has_images = False
         self.images_button.setVisible(has_images)
+        self.content_changed.emit()
 
     def submit_answer(self):
         question = self.questions[self.index]
@@ -231,6 +233,7 @@ class PracticeDialog(QDialog):
         self.mistake_reason.setVisible(True)
         self.record_button.setVisible(True)
         self.reveal_button.setVisible(False)
+        self.content_changed.emit()
 
     def show_images(self):
         self.images_requested.emit(self.questions[self.index]["id"])
@@ -270,5 +273,6 @@ class PracticeDialog(QDialog):
             self.record_button.setText("返回题库")
             self.record_button.clicked.disconnect(self.record_and_continue)
             self.record_button.clicked.connect(self.accept)
+            self.content_changed.emit()
             return
         self.show_question()

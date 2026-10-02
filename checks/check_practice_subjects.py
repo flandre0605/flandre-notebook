@@ -53,6 +53,10 @@ def check():
                 run = window._page_dialogs["practice_run"]
                 assert {question["id"] for question in run.questions} == expected
                 assert window.page_stack.currentWidget() == window._pages["practice_run"]
+                if mode == "all" and subject == "数学":
+                    run.submit_answer()
+                    assert run.solution.isVisible()
+                    assert window._motion._target is run
                 run.reject()
             window.start_practice()
             setup.mode.setCurrentIndex(setup.mode.findData("all"))

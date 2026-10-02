@@ -51,8 +51,10 @@ def check(preview_path=None):
             if preview_path:
                 assert window.grab().save(str(preview_path))
             window.table.selectRow(1)
+            assert window._motion._target is window.preview_stem
             selected_id = window._selected_id()
             window.preview_tabs.setCurrentIndex(1)
+            assert window._motion._target is window.preview_solution
             assert "<提示>" in window.preview_solution.toPlainText()
             window.refresh()
             assert window._selected_id() == selected_id
