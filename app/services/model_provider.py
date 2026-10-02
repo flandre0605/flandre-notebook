@@ -243,7 +243,7 @@ def test_profile(profile) -> str:
     )
 
 
-def _parse_recognition_json(content: str) -> dict | list:
+def _parse_json_content(content: str) -> dict | list:
     candidate = content.strip().lstrip("\ufeff")
     try:
         payload = json.loads(candidate)
@@ -262,7 +262,7 @@ def _parse_recognition_json(content: str) -> dict | list:
             continue
         if isinstance(payload, (dict, list)):
             return payload
-    raise json.JSONDecodeError("No valid recognition object", candidate, 0)
+    raise json.JSONDecodeError("No valid JSON object or array", candidate, 0)
 
 
 def _image_for_request(image_path: Path, mime_type: str) -> tuple[str, str]:
@@ -319,7 +319,7 @@ def recognize_image(profile, image_path: str | Path) -> list[dict[str, str]]:
             raise
         content = _request(profile, messages, json_mode=False)
     try:
-        draft = _parse_recognition_json(content)
+        draft = _parse_json_content(content)
     except json.JSONDecodeError:
         raise ProviderError("模型返回内容不是有效 JSON，原始响应已保留。", content) from None
     if isinstance(draft, dict) and isinstance(draft.get("questions"), list):

@@ -12,12 +12,17 @@ def normalize_word(value):
     return " ".join(unicodedata.normalize("NFKC", value).replace("’", "'").strip().split())
 
 
-def _values(data):
-    word = normalize_word(data.get("word", ""))
-    meaning = data.get("meaning", "").strip()
+def validate_word(value):
+    word = normalize_word(value)
     if not word or len(word) > 100 or not re.fullmatch(r"[A-Za-z]+(?:[ '\-][A-Za-z]+)*", word):
         raise ValueError("请输入英文单词或短语（最多 100 个字符，可含空格、连字符和撇号）。")
-    if not meaning or len(meaning) > 4000:
+    return word
+
+
+def _values(data, require_meaning=True):
+    word = validate_word(data.get("word", ""))
+    meaning = data.get("meaning", "").strip()
+    if (require_meaning and not meaning) or len(meaning) > 4000:
         raise ValueError("请填写释义，最多 4000 个字符。")
     extras = []
     for key, label, maximum in (("phonetic", "音标", 100), ("example", "例句", 4000), ("book", "单词本名称", 100)):
@@ -108,21 +113,39 @@ def record_review(word_id, rating):
         )
 
 
-def import_csv(path):
+def read_word_file(path):
     path = Path(path)
+    if path.suffix.lower() not in {".csv", ".txt"}:
+        raise ValueError("请选择 TXT 或 CSV 词表。")
     if path.stat().st_size > 5 * 1024 * 1024:
-        raise ValueError("CSV 文件不能超过 5 MB。")
+        raise ValueError("词表文件不能超过 5 MB。")
     try:
         content = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
         content = path.read_text(encoding="gb18030")
+    if path.suffix.lower() == ".txt":
+        rows = []
+        for index, line in enumerate(content.splitlines(), 1):
+            if not line.strip():
+                continue
+            word, _, meaning = line.partition("\t")
+            try:
+                values = _values(dict(word=word, meaning=meaning), require_meaning=False)
+            except ValueError as error:
+                raise ValueError(f"第 {index} 行：{error}") from error
+            rows.append(dict(zip(("word", "meaning", "phonetic", "example", "book"), values)))
+            if len(rows) > 5000:
+                raise ValueError("每次最多导入 5000 个单词。")
+        if not rows:
+            raise ValueError("TXT 没有单词数据。")
+        return rows
     aliases = {"单词": "word", "释义": "meaning", "音标": "phonetic", "例句": "example", "单词本": "book"}
     reader = csv.DictReader(content.splitlines(keepends=True), strict=True)
     if reader.fieldnames is None:
         raise ValueError("CSV 文件为空。")
     reader.fieldnames = [aliases.get(name.strip(), name.strip().lower()) for name in reader.fieldnames]
-    if not {"word", "meaning"}.issubset(reader.fieldnames) or len(set(reader.fieldnames)) != len(reader.fieldnames):
-        raise ValueError("CSV 表头必须包含 word 和 meaning（或 单词 和 释义），且不能重复。")
+    if "word" not in reader.fieldnames or len(set(reader.fieldnames)) != len(reader.fieldnames):
+        raise ValueError("CSV 表头必须包含 word（或 单词），且不能重复；释义可稍后补全。")
     values = []
     for index, row in enumerate(reader, 1):
         if index > 5000:
@@ -130,11 +153,18 @@ def import_csv(path):
         if None in row or any(value is None for value in row.values()):
             raise ValueError(f"第 {reader.line_num} 行的列数与表头不一致。")
         try:
-            values.append(_values(row))
+            values.append(_values(row, require_meaning=False))
         except ValueError as error:
             raise ValueError(f"第 {reader.line_num} 行：{error}") from error
     if not values:
         raise ValueError("CSV 没有单词数据。")
+    return [dict(zip(("word", "meaning", "phonetic", "example", "book"), value)) for value in values]
+
+
+def import_rows(rows):
+    values = [_values(row) for row in rows]
+    if not values or len(values) > 5000:
+        raise ValueError("每次导入 1～5000 个单词。")
     added = 0
     with store._connection() as connection:
         for value in values:
@@ -144,3 +174,7 @@ def import_csv(path):
             )
             added += cursor.rowcount
     return added, len(values) - added
+
+
+def import_csv(path):
+    return import_rows(read_word_file(path))

@@ -560,6 +560,8 @@ class MainWindow(QMainWindow):
         page = self._pages.get(key)
         if page is None:
             return
+        if key != "vocabulary" and "vocabulary" in self._pages:
+            self.vocabulary_page.speech.stop()
         self.restore_mini_practice()
         changed = self.page_stack.currentWidget() != page
         self.page_stack.setCurrentWidget(page)
@@ -629,6 +631,9 @@ class MainWindow(QMainWindow):
         self._show_page("library")
 
     def closeEvent(self, event):
+        if "vocabulary" in self._pages:
+            self.vocabulary_page.cancel_translation()
+            self.vocabulary_page.speech.stop()
         self.restore_mini_practice(show_main=False)
         self._motion.finish()
         self._cancel_screenshot()
