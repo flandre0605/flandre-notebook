@@ -6,6 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import QBuffer, QIODevice, QSize, Qt
 from PySide6.QtGui import QImageReader
@@ -181,6 +182,12 @@ def list_models(profile, api_key: str | None = None) -> list[str]:
 def _request(profile, messages, max_tokens=1200, json_mode=False) -> str:
     api_key = get_api_key(profile["api_key_ref"])
     url = _endpoint(profile["base_url"], profile["endpoint_path"])
+    endpoint = urllib.parse.urlsplit(url)
+    if (endpoint.hostname in {"localhost", "127.0.0.1", "::1"} and endpoint.port == 4000
+            and profile["model_id"] == "v4.1flash"
+            and not any(message.get("role") == "assistant" for message in messages)):
+        # DeeperSeeker ignores images in its session signature; independent tasks need a unique signature.
+        messages = [{"role": "system", "content": f"本次独立任务编号：{uuid4().hex}。编号仅用于区分任务，无需输出。"}, *messages]
     request_body = {
         "model": profile["model_id"],
         "messages": messages,
