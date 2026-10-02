@@ -36,6 +36,13 @@ def check():
         with patch.object(provider, "_request", return_value=valid) as request:
             assert provider.recognize_image({}, "unused.png")[0]["answer"] == "0"
             assert request.call_count == 1
+        with patch.object(provider, "_request", return_value="Unknown upstream failure") as request:
+            try:
+                provider.recognize_image({}, "unused.png")
+            except provider.ProviderError as error:
+                assert "停止自动重试" in str(error) and request.call_count == 1
+            else:
+                raise AssertionError("Retried a non-draft response")
     profile = dict(api_key_ref="mock", base_url="https://example.com/v1",
                    endpoint_path="/chat/completions", model_id="mock", timeout_seconds=5)
     response = MagicMock()
@@ -51,6 +58,33 @@ def check():
             assert "长度上限" in str(error) and error.raw_response == valid
         else:
             raise AssertionError("Accepted truncated response")
+        notice = ("[req_c7d47c91] [kimi-k3]\n**AI provider temporarily unavailable**\n"
+                  "The AI provider failed to process your request.\n"
+                  "Billing: This request still counts as a request.")
+        for payload in (
+            {"choices": [{"message": {"content": notice}, "finish_reason": "stop"}]},
+            {"error": {"message": "Upstream unavailable"}},
+        ):
+            response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+            with patch.object(provider, "_image_for_request", return_value=("image/png", "mock")):
+                before = provider.urllib.request.urlopen.call_count
+                try:
+                    provider.recognize_image(profile, "unused.png")
+                except provider.ProviderError as error:
+                    assert "停止自动重试" in str(error) and error.raw_response
+                    assert provider.urllib.request.urlopen.call_count == before + 1
+                else:
+                    raise AssertionError("Accepted relay error as model output")
+        # The same transport guard must also prevent a false successful connection test.
+        response.__enter__.return_value.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": notice}}]}
+        ).encode()
+        try:
+            provider.test_profile(profile)
+        except provider.ProviderError as error:
+            assert error.raw_response == notice
+        else:
+            raise AssertionError("Connection check accepted relay error")
     print("PASS: fenced JSON, incomplete batch rejection, one formatting retry, raw response and truncation")
 
 
