@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QSettings, Signal
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -28,6 +28,7 @@ class SilentSpeech(QObject):
         super().__init__(parent)
         self.voices = []
         self.status = "检查模式：不播放声音"
+        self.speed = 2
         self.spoken = []
         self.stopped = 0
 
@@ -39,6 +40,9 @@ class SilentSpeech(QObject):
 
     def set_voice(self, index):
         pass
+
+    def set_speed(self, index):
+        self.speed = index
 
 
 def fails(call, kind=ValueError):
@@ -79,17 +83,29 @@ def check(previews=None):
                     '{"words":[{"word":"Remember","meaning":"English only"}]}', "not JSON"):
         with patch.object(translation, "_request", return_value=invalid):
             fails(lambda: translation.translate_words(profile, ["Remember"]), ProviderError)
-    with patch("app.ui.pronunciation.QTextToSpeech", None):
-        speech = Pronunciation(None)
-        assert not speech.say("word") and not speech.voices
-        speech.engine = Mock()
-        speech.voices = [object()]
-        assert speech.say(" word ")
-        speech.engine.say.assert_called_once_with("word")
-        assert speech.engine.stop.call_count == 1
-        speech.set_voice(0)
-        speech.engine.setVoice.assert_called_once_with(speech.voices[0])
-        assert not speech.say(" ")
+    with tempfile.TemporaryDirectory() as preferences:
+        settings = QSettings(str(Path(preferences) / "settings.ini"), QSettings.Format.IniFormat)
+        with patch("app.ui.pronunciation.QTextToSpeech", None), patch("app.ui.pronunciation.QSettings", return_value=settings):
+            speech = Pronunciation(None)
+            assert not speech.say("word") and not speech.voices and speech.speed == 2
+            speech.engine = Mock()
+            speech.voices = [object()]
+            assert speech.say(" word ")
+            speech.engine.say.assert_called_once_with("word")
+            assert speech.engine.stop.call_count == 1
+            for speed in range(5):
+                speech.set_speed(speed)
+                speech.engine.setRate.assert_called_with(Pronunciation.RATES[speed])
+                assert Pronunciation(None).speed == speed
+            speech.set_voice(0)
+            speech.engine.setVoice.assert_called_once_with(speech.voices[0])
+            speech.engine.setRate.assert_called_with(Pronunciation.RATES[4])
+            assert not speech.say(" ")
+            speech.set_speed(-1)
+            assert speech.speed == 4
+            for invalid in ("bad", 99, -2):
+                settings.setValue("vocabulary/speech_speed", invalid)
+                assert Pronunciation(None).speed == 2
     connection = store._connection
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -116,6 +132,9 @@ def check(previews=None):
             window.show()
             window.show_vocabulary()
             page = window.vocabulary_page
+            assert page.speech_speed.currentText() == "正常" and not page.speech_speed.isEnabled()
+            page.speech_speed.setCurrentIndex(0)
+            assert page.speech.speed == 0
             assert page.profile.currentData() == "mock-profile"  # text-only profile is usable
             page.edit_word()
             page.word.setText("Remember")
@@ -201,7 +220,7 @@ def check(previews=None):
             assert page.import_table.rowCount() == 0 and page.views.currentWidget() is page.library
             assert not page.resume_import.isVisible()
             window.close()
-    print("PASS: TXT/CSV, atomic import, translation validation/fallback/batches/retry/cancel, pronunciation/spelling, compact UI")
+    print("PASS: TXT/CSV, atomic import, translation validation/fallback/batches/retry/cancel, pronunciation/speed persistence/spelling, compact UI")
 
 
 if __name__ == "__main__":

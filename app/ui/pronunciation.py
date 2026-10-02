@@ -1,6 +1,6 @@
 import sys
 
-from PySide6.QtCore import QLocale, QObject, Signal
+from PySide6.QtCore import QLocale, QObject, QSettings, Signal
 
 try:
     from PySide6.QtTextToSpeech import QTextToSpeech
@@ -10,9 +10,16 @@ except ImportError:
 
 class Pronunciation(QObject):
     status_changed = Signal(str)
+    RATES = (-0.6, -0.3, 0.0, 0.3, 0.6)
 
     def __init__(self, parent):
         super().__init__(parent)
+        self.settings = QSettings()
+        try:
+            speed = int(self.settings.value("vocabulary/speech_speed", 2))
+        except (TypeError, ValueError):
+            speed = 2
+        self.speed = speed if 0 <= speed < len(self.RATES) else 2
         self.engine = None
         self.voices = []
         self.status = "当前环境没有可用的系统英语语音。"
@@ -31,6 +38,7 @@ class Pronunciation(QObject):
         if self.voices:
             self.engine.setVoice(self.voices[0])
             self.status = "系统英语发音 · 离线可用"
+        self.engine.setRate(self.RATES[self.speed])
         self.engine.stateChanged.connect(self._state_changed)
         self.engine.errorOccurred.connect(lambda _error, message: self._status(f"发音不可用：{message}"))
 
@@ -50,6 +58,15 @@ class Pronunciation(QObject):
         if 0 <= index < len(self.voices):
             self.stop()
             self.engine.setVoice(self.voices[index])
+            self.engine.setRate(self.RATES[self.speed])
+
+    def set_speed(self, index):
+        if 0 <= index < len(self.RATES):
+            self.stop()
+            self.speed = index
+            if self.engine:
+                self.engine.setRate(self.RATES[index])
+            self.settings.setValue("vocabulary/speech_speed", index)
 
     def say(self, text):
         if not self.engine or not self.voices:
