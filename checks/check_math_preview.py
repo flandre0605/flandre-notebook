@@ -66,6 +66,7 @@ def check(previews=None):
             question_id = store.save_question(dict(stem=stem, answer=answer, explanation=explanation,
                                                    subject="数学", question_type="计算题"))
             window = MainWindow()
+            window.show_library()
             window.show()
             QTest.qWait(230)
             assert "data:image/png" in window.preview_stem.toHtml()

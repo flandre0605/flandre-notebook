@@ -15,12 +15,14 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFileDialog,
     QHBoxLayout,
+    QGridLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QStackedWidget,
+    QScrollArea,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -32,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.database import store
+from app.database import store, vocabulary
 from app.services import backup, attachments
 from app.ui.attachments_dialog import AttachmentsDialog
 from app.ui.history_dialog import HistoryDialog
@@ -229,7 +231,8 @@ class MainWindow(QMainWindow):
             return button
 
         recognition_icon = "M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"
-        add_nav("我的题库", self.show_library, "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z", page_key="library", active=True)
+        add_nav("学习首页", self.show_home, "M3 11l9-8 9 8 M5 10v11h14V10 M9 21v-7h6v7", page_key="home", active=True)
+        add_nav("我的题库", self.show_library, "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z", page_key="library")
         add_nav("开始练习", self.start_practice, "M7 4l13 8-13 8z", page_key="practice")
         add_nav("练习记录", self.show_history, "M21 12a9 9 0 1 1-18 0 9 9 0 1 1 18 0 M12 7v5l3 2", page_key="history")
         add_nav("英语背单词", self.show_vocabulary, "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3z M12 6v16 M6 9h3 M15 9h3", page_key="vocabulary")
@@ -480,6 +483,11 @@ class MainWindow(QMainWindow):
         self._page_containers = {"library": page}
         self._page_dialogs = {}
         self._page_nav_keys = {"library": "library"}
+        home = self._build_home()
+        self.page_stack.addWidget(home)
+        self._pages["home"] = home
+        self._page_containers["home"] = home
+        self._page_nav_keys["home"] = "home"
         shell.addWidget(self.page_stack, 1)
         self.setCentralWidget(central)
         self.statusBar().showMessage("本地模式 · 题库数据保存在此设备")
@@ -497,6 +505,131 @@ class MainWindow(QMainWindow):
         self._update_screenshot_status()
         self._refresh_filter_options()
         self.refresh()
+        self.show_home()
+
+    def _build_home(self):
+        canvas = QWidget()
+        canvas.setObjectName("homeCanvas")
+        layout = QVBoxLayout(canvas)
+        layout.setContentsMargins(28, 26, 28, 24)
+        layout.setSpacing(20)
+        hero = QFrame()
+        hero.setObjectName("homeHero")
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(26, 22, 26, 22)
+        intro = QVBoxLayout()
+        eyebrow = QLabel("YOUR STUDY SPACE  /  学习空间")
+        eyebrow.setObjectName("muted")
+        title = QLabel("今天，从哪里开始？")
+        title.setObjectName("pageTitle")
+        caption = QLabel("把不会的题收好，把学过的知识记牢。")
+        caption.setObjectName("pageSubtitle")
+        intro.addWidget(eyebrow)
+        intro.addWidget(title)
+        intro.addWidget(caption)
+        hero_layout.addLayout(intro, 1)
+        mascot = QLabel()
+        mascot.setPixmap(QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "flandre_icon.png")).scaled(
+            90, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        hero_layout.addWidget(mascot)
+        layout.addWidget(hero)
+        stats = QHBoxLayout()
+        stats.setSpacing(12)
+        self.home_stats = {}
+        for key, caption in (("total", "收录题目"), ("wrong", "错题"), ("due", "题目待复习"), ("words", "收录单词")):
+            card = QFrame()
+            card.setObjectName("homeStatCard")
+            box = QVBoxLayout(card)
+            box.setContentsMargins(18, 14, 18, 14)
+            value = QLabel("0")
+            value.setObjectName("homeStatValue")
+            label = QLabel(caption)
+            label.setObjectName("muted")
+            box.addWidget(value)
+            box.addWidget(label)
+            stats.addWidget(card, 1)
+            self.home_stats[key] = value
+        layout.addLayout(stats)
+        heading = QLabel("选择学习方式")
+        heading.setObjectName("detailTitle")
+        layout.addWidget(heading)
+        grid = QGridLayout()
+        grid.setSpacing(14)
+        self.home_actions = {}
+        for index, (key, title, caption, action, callback, icon) in enumerate((
+            ("capture", "截图识题", "框选屏幕中的题目，AI 分题后核对收录。", "截图并识别", self.capture_screenshot,
+             "M3 8V3h5 M16 3h5v5 M21 16v5h-5 M8 21H3v-5 M7 7h10v10H7z"),
+            ("practice", "题目练习", "按学科、错题或到期范围练习，也可以切换小窗。", "开始 / 继续练习", self.start_practice,
+             "M7 4l13 8-13 8z"),
+            ("vocabulary", "英语背单词", "翻卡记忆、拼写练习和发音，支持 TXT / CSV 词表。", "进入单词本", self.show_vocabulary,
+             "M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3z M12 6v16"),
+            ("library", "我的题库", "搜索、筛选和整理已收录的题目，查看答案与解析。", "浏览题库", self.show_library,
+             "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z"),
+        )):
+            card = QFrame()
+            card.setObjectName("homeFeatureCard")
+            box = QVBoxLayout(card)
+            box.setContentsMargins(20, 18, 20, 18)
+            box.setSpacing(10)
+            row = QHBoxLayout()
+            mark = QLabel()
+            mark.setPixmap(_line_icon(icon, ACCENT).pixmap(24, 24))
+            name = QLabel(title)
+            name.setObjectName("detailTitle")
+            row.addWidget(mark)
+            row.addWidget(name, 1)
+            box.addLayout(row)
+            description = QLabel(caption)
+            description.setObjectName("muted")
+            description.setWordWrap(True)
+            box.addWidget(description)
+            button = AnimatedButton(action)
+            button.setObjectName("primaryButton" if key == "capture" else "softButton")
+            button.clicked.connect(callback)
+            box.addWidget(button, alignment=Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(card, index // 2, index % 2)
+            self.home_actions[key] = button
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+        self.home_reminder = QLabel()
+        self.home_reminder.setObjectName("muted")
+        self.home_reminder.setWordWrap(True)
+        layout.addWidget(self.home_reminder)
+        quick = QHBoxLayout()
+        for text, callback in (("手动录题", self.add_question), ("查看练习记录", self.show_history), ("设置模型与快捷键", self.manage_profiles)):
+            button = AnimatedButton(text)
+            button.clicked.connect(callback)
+            quick.addWidget(button)
+        quick.addStretch()
+        layout.addLayout(quick)
+        layout.addStretch()
+        scroll = QScrollArea()
+        scroll.setObjectName("homeScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(canvas)
+        return scroll
+
+    def _refresh_home(self):
+        try:
+            total, wrong, due = store.question_summary()
+            (words, new_words, due_words), _ = vocabulary.summary_and_books()
+        except sqlite3.Error:
+            for label in self.home_stats.values():
+                label.setText("—")
+            self.home_reminder.setText("学习数据暂时无法读取，请检查本地数据库。")
+            return
+        for key, value in (("total", total), ("wrong", wrong), ("due", due), ("words", words)):
+            self.home_stats[key].setText(f"{value:,}")
+        self.home_reminder.setText(
+            f"复习提醒：{due} 道题目、{due_words} 个单词已到复习时间。单词本中还有 {new_words} 个新词。"
+            if total or words else "还没有学习内容，先截图收录一道题，或在单词本导入一份词表。"
+        )
+
+    def show_home(self):
+        self._refresh_home()
+        self._show_page("home")
 
     def capture_screenshot(self):
         if self._screenshot_overlays:
@@ -645,6 +778,7 @@ class MainWindow(QMainWindow):
             return
         for key, value in zip(("total", "wrong", "due"), summary):
             self.stat_values[key].setText(f"{value:,}")
+        self._refresh_home()
         filtered = bool(
             self.search.text().strip()
             or self.subject_filter.currentData()

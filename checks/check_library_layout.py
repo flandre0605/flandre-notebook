@@ -43,6 +43,7 @@ def check(preview_path=None):
                                          is_wrong=wrong, answer=answer,
                                          explanation="配方：f(x) = (x − 1)² − 4。\n注意区间端点。<提示>"))
             window = MainWindow()
+            window.show_library()
             assert not window.findChild(QLabel, "appBrandIcon").pixmap().isNull()
             window.show()
             app.processEvents()
