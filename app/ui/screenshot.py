@@ -5,6 +5,7 @@ from ctypes import wintypes
 from PySide6.QtCore import QAbstractNativeEventFilter, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QPixmap, QShortcut
 from PySide6.QtWidgets import QApplication, QWidget
+from app.ui.theme import ACCENT
 
 
 class ScreenshotOverlay(QWidget):
@@ -41,7 +42,7 @@ class ScreenshotOverlay(QWidget):
             painter.drawPixmap(self.selection, self.screenshot.copy(source))
             painter.setPen(QPen(QColor("#ffffff"), 1))
             painter.drawRect(self.selection.adjusted(0, 0, -1, -1))
-            painter.setPen(QPen(QColor("#4c78ee"), 2))
+            painter.setPen(QPen(QColor(ACCENT), 2))
             painter.drawRect(self.selection.adjusted(1, 1, -2, -2))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(31, 45, 67, 230))

@@ -10,12 +10,12 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
     QVBoxLayout,
 )
 
 from app.database import store
 from app.services import attachments
+from app.ui.motion import AnimatedButton
 
 
 class AttachmentsDialog(QDialog):
@@ -31,14 +31,13 @@ class AttachmentsDialog(QDialog):
         self.preview = QLabel("选择图片预览")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumSize(420, 360)
-        self.preview.setStyleSheet(
-            "background: #f8f9fc; border: 1px solid #e7ebf2; border-radius: 10px;"
-            " color: #8490a1;"
-        )
+        self.preview.setObjectName("attachmentPreview")
 
-        self.add_button = QPushButton("添加图片")
-        self.remove_button = QPushButton("移除图片")
-        self.close_button = QPushButton("返回")
+        self.add_button = AnimatedButton("添加图片")
+        self.add_button.setObjectName("softButton")
+        self.remove_button = AnimatedButton("移除图片")
+        self.remove_button.setObjectName("dangerButton")
+        self.close_button = AnimatedButton("返回")
         self.add_button.clicked.connect(self.add_images)
         self.remove_button.clicked.connect(self.remove_image)
         self.close_button.clicked.connect(self.accept)

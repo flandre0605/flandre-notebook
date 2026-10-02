@@ -1,9 +1,11 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
+    QLineEdit, QMessageBox, QPlainTextEdit, QVBoxLayout,
 )
+from app.ui.motion import AnimatedButton
+from app.ui.theme import STYLE
 
 
 class RecognitionDraftDialog(QDialog):
@@ -17,13 +19,12 @@ class RecognitionDraftDialog(QDialog):
         self.question = question
         self.setWindowTitle(f"检查 AI 识题草稿（{len(self.drafts)} 道）")
         self.resize(980, 700)
-        self.setStyleSheet("QDialog{background:#f4f6fa;} QLineEdit,QPlainTextEdit{background:white;border:1px solid #dfe5ee;border-radius:7px;padding:7px;}")
+        self.setStyleSheet(STYLE)
         self.image = QLabel("原图")
+        self.image.setObjectName("attachmentPreview")
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image.setMinimumSize(350, 300)
-        pixmap = QPixmap(str(image_path))
-        if not pixmap.isNull():
-            self.image.setPixmap(pixmap.scaled(440, 600, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        self._image_pixmap = QPixmap(str(image_path))
         self.stem = QPlainTextEdit()
         self.stem.setMinimumHeight(110)
         self.subject = QLineEdit()
@@ -39,7 +40,8 @@ class RecognitionDraftDialog(QDialog):
         for index in range(len(self.drafts)):
             self.question_selector.addItem(f"第 {index + 1} 题", index)
         self.question_selector.setVisible(len(self.drafts) > 1)
-        self.remove_draft_button = QPushButton("移除此题")
+        self.remove_draft_button = AnimatedButton("移除此题")
+        self.remove_draft_button.setObjectName("dangerButton")
         self.remove_draft_button.setVisible(len(self.drafts) > 1)
         self.remove_draft_button.clicked.connect(self._remove_current_draft)
         form = QFormLayout()
@@ -50,6 +52,7 @@ class RecognitionDraftDialog(QDialog):
         content.addWidget(self.image, 1)
         content.addLayout(form, 2)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("返回识题")
         save_button = self.buttons.button(QDialogButtonBox.StandardButton.Save)
         save_button.setObjectName("primaryButton")
         save_button.setMinimumHeight(38)
@@ -66,12 +69,12 @@ class RecognitionDraftDialog(QDialog):
         )
         review_row = QHBoxLayout()
         self.instruction_label = QLabel(instruction)
+        self.instruction_label.setObjectName("muted")
+        self.instruction_label.setWordWrap(True)
         self.validation_status = QLabel()
         self.validation_status.setStyleSheet("color:#b84d58;font-size:12px;")
         self.progress_label = QLabel()
-        self.progress_label.setStyleSheet(
-            "background:#edf2ff;color:#365dcc;border-radius:10px;padding:5px 10px;font-weight:600;"
-        )
+        self.progress_label.setObjectName("badge")
         review_row.addWidget(self.instruction_label, 1)
         review_row.addWidget(self.progress_label)
         review_row.addWidget(self.question_selector)
@@ -83,6 +86,17 @@ class RecognitionDraftDialog(QDialog):
         self._load_draft(0)
         self._update_progress()
         self.question_selector.currentIndexChanged.connect(self._switch_draft)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self, self._fit_image)
+
+    def _fit_image(self):
+        if not self._image_pixmap.isNull():
+            self.image.setPixmap(self._image_pixmap.scaled(
+                self.image.size() - QSize(20, 20), Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
 
     def _load_draft(self, index):
         draft = self.drafts[index]

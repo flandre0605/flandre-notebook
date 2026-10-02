@@ -4,13 +4,15 @@ from PySide6.QtCore import QSettings, Qt, QThreadPool
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QKeySequenceEdit, QLineEdit, QListWidget, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
+    QKeySequenceEdit, QLineEdit, QListWidget, QMessageBox, QSpinBox, QVBoxLayout,
 )
 
 from app.database import store
 from app.services import credentials
 from app.services.model_provider import list_models, test_profile, validate_profile
 from app.ui.screenshot import GlobalScreenshotHotkey
+from app.ui.motion import AnimatedButton
+from app.ui.theme import ACCENT, MUTED
 from app.ui.worker import Worker
 
 
@@ -30,7 +32,7 @@ class ProfilesDialog(QDialog):
         self.model = QComboBox()
         self.model.setEditable(True)
         self.model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        self.fetch_models_button = QPushButton("获取模型列表")
+        self.fetch_models_button = AnimatedButton("获取模型列表")
         self.fetch_models_button.clicked.connect(self._fetch_models)
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -41,31 +43,38 @@ class ProfilesDialog(QDialog):
         self.vision = QCheckBox("支持图片识题")
         self.enabled = QCheckBox("启用")
         self.enabled.setChecked(True)
-        self.test_button = QPushButton("测试连接")
+        self.test_button = AnimatedButton("测试连接")
         self.test_button.clicked.connect(self._test)
         self.connection_status = QLabel("尚未测试连接")
-        self.connection_status.setStyleSheet("color:#7b8799;font-size:12px;")
+        self.connection_status.setWordWrap(True)
+        self.connection_status.setStyleSheet(f"color:{MUTED};font-size:12px;")
         self.screenshot_shortcut = QKeySequenceEdit(
             QKeySequence(QSettings().value("shortcuts/screenshot", "Ctrl+Alt+S"))
         )
-        self.apply_shortcut_button = QPushButton("应用快捷键")
+        self.screenshot_shortcut.setMinimumHeight(38)
+        self.apply_shortcut_button = AnimatedButton("应用快捷键")
         self.apply_shortcut_button.clicked.connect(self._apply_screenshot_shortcut)
         self.shortcut_status = QLabel(
             f"当前快捷键：{self.screenshot_shortcut.keySequence().toString(QKeySequence.SequenceFormat.NativeText)}"
         )
-        self.shortcut_status.setStyleSheet("color:#7b8799;font-size:12px;")
-        self.new_button = QPushButton("新增")
-        self.save_button = QPushButton("保存配置")
-        self.delete_button = QPushButton("删除")
+        self.shortcut_status.setStyleSheet(f"color:{MUTED};font-size:12px;")
+        self.new_button = AnimatedButton("新增配置")
+        self.new_button.setObjectName("softButton")
+        self.save_button = AnimatedButton("保存配置")
+        self.save_button.setObjectName("primaryButton")
+        self.delete_button = AnimatedButton("删除")
+        self.delete_button.setObjectName("dangerButton")
         self.new_button.clicked.connect(self._new)
         self.save_button.clicked.connect(self._save)
         self.delete_button.clicked.connect(self._delete)
 
         form = QFormLayout()
+        form.setVerticalSpacing(14)
         form.addRow("显示名称", self.name)
         form.addRow("API 基础地址", self.base_url)
         form.addRow("API 请求路径", self.endpoint_path)
         model_row = QHBoxLayout()
+        model_row.setSpacing(10)
         model_row.addWidget(self.model, 1)
         model_row.addWidget(self.fetch_models_button)
         form.addRow("模型 ID", model_row)
@@ -74,11 +83,13 @@ class ProfilesDialog(QDialog):
         form.addRow("能力", self.vision)
         form.addRow("状态", self.enabled)
         shortcut_row = QHBoxLayout()
+        shortcut_row.setSpacing(10)
         shortcut_row.addWidget(self.screenshot_shortcut, 1)
         shortcut_row.addWidget(self.apply_shortcut_button)
         form.addRow("截图快捷键", shortcut_row)
         form.addRow("", self.shortcut_status)
         connection_row = QHBoxLayout()
+        connection_row.setSpacing(10)
         connection_row.addWidget(self.test_button)
         connection_row.addWidget(self.connection_status, 1)
         form.addRow("连接状态", connection_row)
@@ -89,8 +100,19 @@ class ProfilesDialog(QDialog):
         right.addLayout(form)
         right.addStretch()
         right.addLayout(actions)
+        left = QVBoxLayout()
+        list_title = QLabel("模型配置")
+        list_title.setObjectName("sectionTitle")
+        self.empty_hint = QLabel("暂无配置：在右侧填写服务信息后，点击“保存配置”。")
+        self.empty_hint.setObjectName("muted")
+        self.empty_hint.setWordWrap(True)
+        left.addWidget(list_title)
+        left.addWidget(self.empty_hint)
+        left.addWidget(self.profiles, 1)
         layout = QHBoxLayout(self)
-        layout.addWidget(self.profiles, 1)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(24)
+        layout.addLayout(left, 1)
         layout.addLayout(right, 2)
         self._reload()
         for field in (self.name, self.base_url, self.endpoint_path, self.api_key):
@@ -123,6 +145,7 @@ class ProfilesDialog(QDialog):
 
     def _reload(self, selected_id=None):
         self.rows = store.list_profiles()
+        self.empty_hint.setVisible(not self.rows)
         self.profiles.clear()
         for row in self.rows:
             self.profiles.addItem(f"{row['name']} · {row['model_id']}")
@@ -144,7 +167,7 @@ class ProfilesDialog(QDialog):
         self.test_button.setEnabled(False)
         self.delete_button.setEnabled(False)
         self.connection_status.setText("尚未测试连接")
-        self.connection_status.setStyleSheet("color:#7b8799;font-size:12px;")
+        self.connection_status.setStyleSheet(f"color:{MUTED};font-size:12px;")
 
     def _mark_edited(self, *_):
         self.connection_status.setText("配置已修改，请重新测试")
@@ -166,7 +189,7 @@ class ProfilesDialog(QDialog):
         self.test_button.setEnabled(True)
         self.delete_button.setEnabled(True)
         self.connection_status.setText("尚未测试连接")
-        self.connection_status.setStyleSheet("color:#7b8799;font-size:12px;")
+        self.connection_status.setStyleSheet(f"color:{MUTED};font-size:12px;")
 
     def _new(self):
         self.profiles.setCurrentRow(-1)
@@ -237,7 +260,7 @@ class ProfilesDialog(QDialog):
             validate_profile(profile)
             self.test_button.setEnabled(False)
             self.connection_status.setText("正在连接…")
-            self.connection_status.setStyleSheet("color:#4169d8;font-size:12px;")
+            self.connection_status.setStyleSheet(f"color:{ACCENT};font-size:12px;")
             self.worker = Worker(lambda: test_profile(profile))
             self.worker.signals.succeeded.connect(self._test_succeeded)
             self.worker.signals.failed.connect(self._test_failed)
@@ -267,7 +290,7 @@ class ProfilesDialog(QDialog):
             return
         self.fetch_models_button.setEnabled(False)
         self.connection_status.setText("正在获取模型列表…")
-        self.connection_status.setStyleSheet("color:#4169d8;font-size:12px;")
+        self.connection_status.setStyleSheet(f"color:{ACCENT};font-size:12px;")
         self.models_worker = Worker(lambda: list_models(profile, api_key or None))
         self.models_worker.signals.succeeded.connect(self._models_succeeded)
         self.models_worker.signals.failed.connect(self._models_failed)

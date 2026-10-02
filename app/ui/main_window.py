@@ -5,8 +5,8 @@ from html import escape
 from pathlib import Path
 import zipfile
 
-from PySide6.QtCore import QSettings, QSignalBlocker, QSize, Qt
-from PySide6.QtGui import QCursor, QGuiApplication, QIcon, QPixmap
+from PySide6.QtCore import QRect, QSettings, QSignalBlocker, QSize, Qt
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,6 +23,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QSplitter,
     QTabWidget,
     QTableWidget,
@@ -41,79 +44,10 @@ from app.ui.image_recognition_dialog import ImageRecognitionDialog
 from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog
 from app.ui.profiles_dialog import ProfilesDialog
 from app.ui.screenshot import GlobalScreenshotHotkey, ScreenshotOverlay
+from app.ui.theme import ACCENT, MUTED, STYLE, TEXT
 
 
-STYLE = """
-QMainWindow, QDialog { background: #f5f7fb; }
-QLabel { color: #273449; }
-QLabel#pageTitle { color: #17243a; font-size: 27px; font-weight: 700; }
-QLabel#pageSubtitle, QLabel#muted { color: #8490a3; font-size: 12px; }
-QLabel#resultCount, QLabel#cardCaption { color: #7c899d; font-size: 12px; }
-QLabel#statValue { color: #354966; font-size: 14px; font-weight: 700; }
-QFrame#sidebar { background: #f0f3f8; border-right: 1px solid #e1e6ef; }
-QFrame#workspaceHeader { background: #ffffff; border-bottom: 1px solid #e1e6ef; }
-QFrame#libraryPanel, QFrame#detailPanel { background: #ffffff; }
-QLabel#detailTitle { color: #273449; font-size: 16px; font-weight: 700; }
-QTextBrowser#previewText { background: white; border: none; padding: 8px 4px; color: #344158; font-size: 14px; }
-QSplitter::handle { background: #edf0f5; }
-QSplitter::handle:hover { background: #c9d7f6; }
-QTabWidget::pane { border: none; border-top: 1px solid #e6ebf2; }
-QTabBar::tab { background: transparent; color: #8390a3; padding: 10px 12px; margin-right: 8px; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #365dcc; border-bottom: 2px solid #4369df; }
-QTabBar::tab:hover { color: #365dcc; }
-QScrollBar:vertical { background: #f6f8fb; width: 10px; margin: 0; }
-QScrollBar::handle:vertical { background: #cbd4e1; border-radius: 4px; min-height: 28px; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
-QLineEdit, QPlainTextEdit, QComboBox {
-    background: #ffffff; border: 1px solid #dfe5ee; border-radius: 8px;
-    padding: 8px 10px; color: #273449; selection-background-color: #dce7ff;
-}
-QLineEdit:hover, QPlainTextEdit:hover, QComboBox:hover { border-color: #c8d2e1; }
-QLineEdit:focus, QPlainTextEdit:focus, QComboBox:focus { border: 1px solid #809bea; }
-QComboBox { min-height: 22px; }
-QComboBox::drop-down { border: 0; width: 25px; }
-QComboBox QAbstractItemView { background: white; border: 1px solid #dfe5ee; selection-background-color: #edf2ff; }
-QPushButton {
-    background: #ffffff; color: #46536a; border: 1px solid #dfe5ee;
-    border-radius: 8px; padding: 8px 13px; font-weight: 600;
-}
-QPushButton:hover { background: #f6f8fc; border-color: #cbd5e3; }
-QPushButton:pressed { background: #e8eef9; border-color: #9bb1da; }
-QPushButton:disabled { color: #aab3c0; background: #f7f8fa; }
-QPushButton#primaryButton { background: #4369df; color: #ffffff; border-color: #4369df; }
-QPushButton#primaryButton:hover { background: #365bcf; }
-QPushButton#primaryButton:pressed { background: #2949af; border-color: #2949af; }
-QPushButton#softButton { background: #eef3ff; color: #3759b2; border-color: #e2eaff; }
-QPushButton#softButton:pressed { background: #dce6ff; }
-QPushButton#dangerButton { color: #bd5962; }
-QPushButton#navButton, QPushButton#navButtonActive, QPushButton#navUtility {
-    text-align: left; border: 0; padding: 11px 13px; font-weight: 500;
-}
-QPushButton#navButton, QPushButton#navUtility { background: transparent; color: #67758a; }
-QPushButton#navButton:hover, QPushButton#navUtility:hover { background: #f4f6fa; color: #2c3a52; }
-QPushButton#navButtonActive { background: #edf2ff; color: #365dcc; font-weight: 700; }
-QPushButton#navButton:pressed, QPushButton#navUtility:pressed, QPushButton#navButtonActive:pressed { background: #dfe8fc; }
-QTableWidget {
-    background: #ffffff; alternate-background-color: #fafbfd;
-    border: none; color: #344158; selection-background-color: #edf2ff;
-    selection-color: #233d78; outline: 0;
-}
-QHeaderView::section {
-    background: #f7f9fc; color: #7c899d; border: none;
-    border-bottom: 1px solid #e9edf3; padding: 11px 12px; font-weight: 600;
-}
-QTableWidget::item { padding-left: 10px; border: none; }
-QTableWidget::item:hover { background: #f7f9fd; }
-QTableWidget::item:selected { background: #edf2ff; color: #233d78; }
-QStatusBar { background: transparent; color: #8a95a5; font-size: 11px; padding: 3px 10px; }
-QDialogButtonBox QPushButton { min-width: 82px; }
-QCheckBox { color: #46536a; spacing: 8px; }
-QToolTip { color: #f8faff; background: #26344b; border: 0; padding: 6px 8px; }
-"""
-
-
-def _line_icon(path, color="#718096"):
+def _line_icon(path, color=MUTED):
     pixmap = QPixmap()
     pixmap.loadFromData((
         '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">'
@@ -121,6 +55,35 @@ def _line_icon(path, color="#718096"):
         'stroke-linecap="round" stroke-linejoin="round"/></svg>'
     ).encode())
     return QIcon(pixmap)
+
+
+class QuestionRowDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        styled = QStyleOptionViewItem(option)
+        self.initStyleOption(styled, index)
+        title, _, metadata = str(index.data() or "").partition("\n")
+        styled.text = ""
+        styled.widget.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, styled, painter, styled.widget)
+        selected = bool(styled.state & QStyle.StateFlag.State_Selected)
+        content = styled.rect.adjusted(12, 8, -12, -8)
+        painter.save()
+        painter.setFont(styled.font)
+        painter.setPen(QColor("#913455" if selected else TEXT))
+        painter.drawText(
+            QRect(content.left(), content.top(), content.width(), 25),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            QFontMetrics(styled.font).elidedText(title, Qt.TextElideMode.ElideRight, content.width()),
+        )
+        small = QFont(styled.font)
+        small.setPointSizeF(max(8, small.pointSizeF() - 1))
+        painter.setFont(small)
+        painter.setPen(QColor(MUTED))
+        painter.drawText(
+            QRect(content.left(), content.top() + 26, content.width(), content.height() - 26),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            QFontMetrics(small).elidedText(metadata, Qt.TextElideMode.ElideRight, content.width()),
+        )
+        painter.restore()
 
 
 class QuestionDialog(QDialog):
@@ -161,6 +124,9 @@ class QuestionDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("保存题目")
+        buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primaryButton")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("返回题库")
         buttons.accepted.connect(self._save_if_valid)
         buttons.rejected.connect(self.reject)
 
@@ -226,13 +192,13 @@ class MainWindow(QMainWindow):
         brand_mark = QLabel()
         brand_mark.setObjectName("appBrandIcon")
         brand_mark.setPixmap(QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "flandre_icon.png")).scaled(
-            36, 36, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            42, 42, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         ))
         brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand_mark.setFixedSize(36, 36)
+        brand_mark.setFixedSize(42, 42)
         brand_text = QVBoxLayout()
         brand_title = QLabel("AI 错题本")
-        brand_title.setStyleSheet("font-size:15px;font-weight:700;color:#1e2b40;")
+        brand_title.setObjectName("brandTitle")
         brand_caption = QLabel("收集 · 整理 · 复习")
         brand_caption.setObjectName("muted")
         brand_text.addWidget(brand_title)
@@ -244,7 +210,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.addSpacing(20)
 
         section_label = QLabel("学习空间")
-        section_label.setStyleSheet("color:#9aa5b5;font-size:11px;padding:0 10px 5px;")
+        section_label.setObjectName("sectionCaption")
         sidebar_layout.addWidget(section_label)
         self._navigation_buttons = []
 
@@ -270,11 +236,12 @@ class MainWindow(QMainWindow):
         sidebar_layout.addSpacing(18)
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setStyleSheet("color:#edf0f5;")
+        divider.setObjectName("separator")
+        divider.setFixedHeight(1)
         sidebar_layout.addWidget(divider)
         sidebar_layout.addSpacing(8)
         section_label = QLabel("管理")
-        section_label.setStyleSheet("color:#9aa5b5;font-size:11px;padding:0 10px 5px;")
+        section_label.setObjectName("sectionCaption")
         sidebar_layout.addWidget(section_label)
         add_nav("设置", self.manage_profiles, "M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M8 15v6", page_key="settings", utility=True)
         add_nav("备份数据", self.create_backup, "M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5", utility=True)
@@ -306,7 +273,7 @@ class MainWindow(QMainWindow):
         self.add_button.setObjectName("primaryButton")
         self.add_button.setMinimumHeight(34)
         self.recognize_button = AnimatedButton("AI 识题")
-        self.recognize_button.setIcon(_line_icon(recognition_icon, "#3759b2"))
+        self.recognize_button.setIcon(_line_icon(recognition_icon, ACCENT))
         self.recognize_button.setObjectName("softButton")
         self.recognize_button.setMinimumHeight(34)
         self.add_button.clicked.connect(self.add_question)
@@ -376,6 +343,8 @@ class MainWindow(QMainWindow):
 
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["题目", "状态"])
+        self.table.setItemDelegateForColumn(0, QuestionRowDelegate(self.table))
+        self.table.horizontalHeaderItem(0).setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -402,7 +371,7 @@ class MainWindow(QMainWindow):
         self.empty_label.setStyleSheet("font-size: 13px; line-height: 1.5;")
         self.empty_title = QLabel("从第一道题开始")
         self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_title.setStyleSheet("font-size:18px;font-weight:700;color:#273449;")
+        self.empty_title.setObjectName("emptyTitle")
         self.empty_action = AnimatedButton("＋  新增题目")
         self.empty_action.setObjectName("primaryButton")
         self.empty_action.clicked.connect(self._empty_action)
@@ -421,7 +390,7 @@ class MainWindow(QMainWindow):
 
         list_header = QHBoxLayout()
         list_title = QLabel("题目列表")
-        list_title.setStyleSheet("font-size:15px;font-weight:700;color:#273449;")
+        list_title.setObjectName("sectionTitle")
         self.result_count = QLabel("共 0 道题")
         self.result_count.setObjectName("resultCount")
         list_header.addWidget(list_title)
@@ -694,7 +663,7 @@ class MainWindow(QMainWindow):
                     item = QTableWidgetItem(value)
                     item.setToolTip(question["stem"] if column == 0 else value)
                     if column == 1 and question["is_wrong"]:
-                        item.setForeground(Qt.GlobalColor.darkRed)
+                        item.setForeground(QColor("#b34d5b"))
                     if column == 0:
                         item.setData(Qt.ItemDataRole.UserRole, question["id"])
                     self.table.setItem(row_index, column, item)
@@ -1002,7 +971,7 @@ class MainWindow(QMainWindow):
         if self._profiles_dialog is None:
             self._profiles_dialog = ProfilesDialog(self)
             self._embed_dialog_page(
-                "settings", self._profiles_dialog, "设置与模型服务", persistent=True
+                "settings", self._profiles_dialog, "设置与模型服务", nav_key="settings", persistent=True
             )
         self._show_page("settings")
 

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from app.database import store
 from app.services.grading import grade_answer
 from app.ui.motion import AnimatedButton
+from app.ui.theme import TEXT
 
 
 class PracticeSetupDialog(QDialog):
@@ -59,7 +60,7 @@ class PracticeSetupDialog(QDialog):
         buttons.rejected.connect(self.reject)
         card = QFrame()
         card.setMaximumWidth(650)
-        card.setStyleSheet("QFrame { background:white; border-radius:12px; }")
+        card.setObjectName("formCard")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(24, 24, 24, 24)
         card_layout.setSpacing(20)
@@ -116,14 +117,12 @@ class PracticeDialog(QDialog):
         self.setMinimumSize(600, 480)
 
         self.progress = QLabel()
-        self.progress.setStyleSheet("color: #7b8799; font-weight: 600;")
+        self.progress.setObjectName("muted")
+        self.progress.setStyleSheet("font-weight: 600;")
         self.stem = QLabel()
         self.stem.setWordWrap(True)
         self.stem.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.stem.setStyleSheet(
-            "background: white; border: 1px solid #e7ebf2; border-radius: 12px;"
-            " padding: 20px; font-size: 17px; color: #263248;"
-        )
+        self.stem.setObjectName("practiceStem")
         self.images_button = AnimatedButton("查看题目图片")
         self.images_button.clicked.connect(self.show_images)
 
@@ -137,13 +136,10 @@ class PracticeDialog(QDialog):
         self.solution = QLabel()
         self.solution.setWordWrap(True)
         self.solution.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.solution.setStyleSheet(
-            "background: #f8f9fc; border: 1px solid #e7ebf2; border-radius: 10px;"
-            " padding: 14px; color: #46536a;"
-        )
+        self.solution.setObjectName("practiceSolution")
         self.judgement = QLabel()
         self.judgement.setWordWrap(True)
-        self.judgement.setStyleSheet("font-weight: 600; color: #46536a;")
+        self.judgement.setStyleSheet(f"font-weight: 600; color: {TEXT};")
         self.result_choice = QComboBox()
         self.result_choice.addItem("自评正确", "correct")
         self.result_choice.addItem("自评错误", "incorrect")

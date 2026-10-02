@@ -14,6 +14,7 @@ from app.services.model_provider import recognize_image
 from app.ui.recognition_draft_dialog import RecognitionDraftDialog
 from app.ui.worker import Worker
 from app.ui.motion import AnimatedButton
+from app.ui.theme import ICON_DIR, MUTED, TEXT
 
 
 class ImageDropZone(QFrame):
@@ -23,26 +24,27 @@ class ImageDropZone(QFrame):
         super().__init__()
         self.setAcceptDrops(True)
         self.setMinimumSize(460, 320)
-        self.setStyleSheet(
-            "QFrame{background:#fff;border:2px dashed #cbd5e3;border-radius:14px;}"
-        )
+        self.setObjectName("imageDropZone")
+        self.setProperty("dragging", False)
         self.preview = QLabel()
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.placeholder = QWidget()
         placeholder_layout = QVBoxLayout(self.placeholder)
         placeholder_layout.setContentsMargins(24, 24, 24, 24)
         placeholder_layout.setSpacing(8)
-        icon = QLabel("▧")
+        icon = QLabel()
+        icon.setPixmap(QPixmap(f"{ICON_DIR}/image.svg").scaled(36, 36, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        icon.setFixedSize(64, 64)
         icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon.setStyleSheet("border:0;color:#7890c7;font-size:34px;")
+        icon.setStyleSheet("background:#fbe8f0;border:1px solid #ecd5df;border-radius:16px;")
         title = QLabel("把题目图片拖到这里")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("border:0;color:#34435c;font-size:16px;font-weight:700;")
+        title.setStyleSheet(f"color:{TEXT};font-size:16px;font-weight:700;")
         hint = QLabel("支持 PNG、JPG、WEBP · 也可以粘贴剪贴板图片")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet("border:0;color:#8a96a8;font-size:12px;")
+        hint.setStyleSheet(f"color:{MUTED};font-size:12px;")
         placeholder_layout.addStretch()
-        placeholder_layout.addWidget(icon)
+        placeholder_layout.addWidget(icon, alignment=Qt.AlignmentFlag.AlignHCenter)
         placeholder_layout.addWidget(title)
         placeholder_layout.addWidget(hint)
         placeholder_layout.addStretch()
@@ -55,22 +57,28 @@ class ImageDropZone(QFrame):
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
             event.acceptProposedAction()
-            self.setStyleSheet("QFrame{background:#f5f8ff;border:2px dashed #6d91e8;border-radius:14px;}")
+            self._set_dragging(True)
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet("QFrame{background:#fff;border:2px dashed #cbd5e3;border-radius:14px;}")
+        self._set_dragging(False)
         event.accept()
 
     def dropEvent(self, event):
-        self.setStyleSheet("QFrame{background:#fff;border:2px dashed #cbd5e3;border-radius:14px;}")
+        self._set_dragging(False)
         for url in event.mimeData().urls():
             if url.isLocalFile():
                 self.image_dropped.emit(url.toLocalFile())
                 event.acceptProposedAction()
                 return
         event.ignore()
+
+    def _set_dragging(self, dragging):
+        self.setProperty("dragging", dragging)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
     def set_image(self, path: Path):
         pixmap = QPixmap(str(path))
@@ -123,11 +131,12 @@ class ImageRecognitionDialog(QDialog):
         self.recognize_button.setObjectName("primaryButton")
         self.recognize_button.clicked.connect(self.recognize)
         self.status = QLabel("选择或拖入题目图片，再选择视觉模型。")
-        self.status.setStyleSheet("color:#7b8799;font-size:12px;")
+        self.status.setObjectName("muted")
         heading = QLabel("整理纸上的错题")
-        heading.setStyleSheet("color:#17243a;font-size:22px;font-weight:700;")
+        heading.setObjectName("pageTitle")
+        heading.setStyleSheet("font-size:22px;font-weight:700;")
         subtitle = QLabel("导入题目图片，AI 会按题目拆分并生成可编辑草稿。")
-        subtitle.setStyleSheet("color:#8490a3;font-size:12px;")
+        subtitle.setObjectName("muted")
         actions = QHBoxLayout()
         actions.addWidget(self.profile, 1)
         actions.addWidget(self.paste_button)

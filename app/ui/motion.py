@@ -2,6 +2,7 @@ from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QPushButton
 from shiboken6 import isValid
+from app.ui.theme import ACCENT
 
 
 class ContentFade(QObject):
@@ -81,7 +82,7 @@ class AnimatedButton(QPushButton):
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor("#ffffff" if self.objectName() == "primaryButton" else "#4369df")
+        color = QColor("#ffffff" if self.objectName() == "primaryButton" else ACCENT)
         color.setAlpha(round(22 * self._hover))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(color)
