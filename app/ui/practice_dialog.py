@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QFormLayout,
     QLabel,
     QMessageBox,
@@ -27,29 +28,76 @@ class PracticeSetupDialog(QDialog):
 
         self.mode = QComboBox()
         self.mode.addItem("全部题目", "all")
-        self.mode.addItem("错题", "wrong")
+        self.mode.addItem("仅错题", "wrong")
         self.mode.addItem("到期复习", "due")
+        self.subject = QComboBox()
+        self.subject.addItem("全部学科", "")
         self.random_order = QCheckBox("随机排列题目")
+        self.use_library_filters = QCheckBox("沿用题库的搜索、题型和状态筛选")
+        self.filter_hint = QLabel()
+        self.filter_hint.setWordWrap(True)
+        self.filter_hint.setObjectName("muted")
+        self.filter_hint.setTextFormat(Qt.TextFormat.PlainText)
         self.status = QLabel()
+        self.status.setWordWrap(True)
         self.status.setStyleSheet("color:#b84d58;font-size:12px;")
 
         form = QFormLayout()
+        form.setVerticalSpacing(16)
+        form.setHorizontalSpacing(20)
+        form.addRow("练习学科", self.subject)
         form.addRow("练习范围", self.mode)
         form.addRow("", self.random_order)
+        form.addRow("", self.use_library_filters)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("开始")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("开始练习")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primaryButton")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("返回题库")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        card = QFrame()
+        card.setMaximumWidth(650)
+        card.setStyleSheet("QFrame { background:white; border-radius:12px; }")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(20)
+        heading = QLabel("选择本轮练习的题目")
+        heading.setObjectName("detailTitle")
+        caption = QLabel("学科与范围可以组合，例如“数学 + 仅错题”。默认不受题库其他筛选影响。")
+        caption.setObjectName("muted")
+        caption.setWordWrap(True)
+        card_layout.addWidget(heading)
+        card_layout.addWidget(caption)
+        card_layout.addLayout(form)
+        card_layout.addWidget(self.filter_hint)
+        card_layout.addWidget(self.status)
+        card_layout.addWidget(buttons)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 20, 22, 18)
-        layout.addLayout(form)
-        layout.addWidget(self.status)
-        layout.addWidget(buttons)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(card)
+        layout.addStretch()
+
+    def refresh_subjects(self):
+        selected = self.subject.currentData()
+        try:
+            subjects, _ = store.question_filter_options()
+        except sqlite3.Error as error:
+            self.status.setText(f"无法读取学科列表：{error}")
+            return
+        self.subject.clear()
+        self.subject.addItem("全部学科", "")
+        for subject in subjects:
+            self.subject.addItem(subject, subject)
+        self.subject.setCurrentIndex(max(0, self.subject.findData(selected)))
+        self.status.clear()
 
     def values(self):
-        return self.mode.currentData(), self.random_order.isChecked()
+        return (
+            self.mode.currentData(), self.subject.currentData(),
+            self.random_order.isChecked(), self.use_library_filters.isChecked(),
+        )
 
 
 class PracticeDialog(QDialog):
@@ -139,7 +187,9 @@ class PracticeDialog(QDialog):
 
     def show_question(self):
         question = self.questions[self.index]
-        self.progress.setText(f"第 {self.index + 1} 题 / 共 {len(self.questions)} 题")
+        self.progress.setText(
+            f"第 {self.index + 1} 题 / 共 {len(self.questions)} 题 · {question['subject'] or '未分类'}"
+        )
         self.stem.setText(question["stem"])
         self.user_answer.clear()
         self.solution.setVisible(False)

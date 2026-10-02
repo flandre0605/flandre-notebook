@@ -908,6 +908,7 @@ class MainWindow(QMainWindow):
             self._show_page("practice_run")
             return
         setup = self._practice_setup
+        first_open = setup is None
         if setup is None:
             setup = PracticeSetupDialog(self)
             self._practice_setup = setup
@@ -916,26 +917,40 @@ class MainWindow(QMainWindow):
             )
             setup.accepted.connect(self._begin_practice)
             setup.rejected.connect(lambda: self._show_page("library"))
+        setup.refresh_subjects()
+        if first_open:
+            setup.subject.setCurrentIndex(max(0, setup.subject.findData(self.subject_filter.currentData())))
+        filters = []
+        if self.search.text().strip():
+            filters.append(f"关键词：{self.search.text().strip()}")
+        if self.type_filter.currentData():
+            filters.append(f"题型：{self.type_filter.currentText()}")
+        if self.state_filter.currentData() != "all":
+            filters.append(f"状态：{self.state_filter.currentText()}")
+        setup.filter_hint.setText(
+            "勾选后额外限制为：" + "；".join(filters)
+            if filters else "题库当前没有额外的搜索、题型或状态限制。"
+        )
         setup.show()
         self._show_page("practice_setup")
 
     def _begin_practice(self):
         setup = self._practice_setup
-        mode, random_order = setup.values()
+        mode, subject, random_order, use_library_filters = setup.values()
         try:
             questions = store.practice_questions(
                 mode,
-                self.search.text().strip(),
-                self.subject_filter.currentData(),
-                self.type_filter.currentData(),
-                self.state_filter.currentData(),
+                search=self.search.text().strip() if use_library_filters else "",
+                subject=subject,
+                question_type=self.type_filter.currentData() if use_library_filters else "",
+                state=self.state_filter.currentData() if use_library_filters else "all",
             )
         except sqlite3.Error as error:
             setup.status.setText(f"无法生成练习题：{error}")
             setup.show()
             return
         if not questions:
-            setup.status.setText("当前筛选范围内没有待练习题目。")
+            setup.status.setText("所选学科和练习范围内没有题目，请调整条件后重试。")
             setup.show()
             return
         setup.status.clear()
