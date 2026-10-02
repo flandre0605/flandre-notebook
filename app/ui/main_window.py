@@ -1,11 +1,12 @@
 import random
 import sqlite3
 import tempfile
+from html import escape
 from pathlib import Path
 import zipfile
 
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QCursor, QGuiApplication
+from PySide6.QtCore import QSettings, QSignalBlocker, QSize, Qt
+from PySide6.QtGui import QCursor, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,8 +24,11 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QStackedWidget,
+    QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -45,15 +49,22 @@ QLabel { color: #273449; }
 QLabel#pageTitle { color: #17243a; font-size: 27px; font-weight: 700; }
 QLabel#pageSubtitle, QLabel#muted { color: #8490a3; font-size: 12px; }
 QLabel#resultCount, QLabel#cardCaption { color: #7c899d; font-size: 12px; }
-QLabel#statValue { color: #18263d; font-size: 25px; font-weight: 700; }
-QLabel#brandMark { background: #4369df; color: white; border-radius: 12px; font-size: 18px; font-weight: 700; }
-QFrame#sidebar { background: #ffffff; border-right: 1px solid #e8edf4; }
-QFrame#toolbarCard, QFrame#tableCard, QFrame#emptyCard, QFrame#statCard {
-    background: #ffffff; border: 1px solid #e6ebf2; border-radius: 12px;
-}
-QFrame#statAccentBlue { background: #4e74e8; border-radius: 2px; }
-QFrame#statAccentRed { background: #e67579; border-radius: 2px; }
-QFrame#statAccentAmber { background: #e7aa45; border-radius: 2px; }
+QLabel#statValue { color: #354966; font-size: 14px; font-weight: 700; }
+QFrame#sidebar { background: #f0f3f8; border-right: 1px solid #e1e6ef; }
+QFrame#workspaceHeader { background: #ffffff; border-bottom: 1px solid #e1e6ef; }
+QFrame#libraryPanel, QFrame#detailPanel { background: #ffffff; }
+QLabel#detailTitle { color: #273449; font-size: 16px; font-weight: 700; }
+QTextBrowser#previewText { background: white; border: none; padding: 8px 4px; color: #344158; font-size: 14px; }
+QSplitter::handle { background: #edf0f5; }
+QSplitter::handle:hover { background: #c9d7f6; }
+QTabWidget::pane { border: none; border-top: 1px solid #e6ebf2; }
+QTabBar::tab { background: transparent; color: #8390a3; padding: 10px 12px; margin-right: 8px; border-bottom: 2px solid transparent; }
+QTabBar::tab:selected { color: #365dcc; border-bottom: 2px solid #4369df; }
+QTabBar::tab:hover { color: #365dcc; }
+QScrollBar:vertical { background: #f6f8fb; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: #cbd4e1; border-radius: 4px; min-height: 28px; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
 QLineEdit, QPlainTextEdit, QComboBox {
     background: #ffffff; border: 1px solid #dfe5ee; border-radius: 8px;
     padding: 8px 10px; color: #273449; selection-background-color: #dce7ff;
@@ -96,6 +107,16 @@ QDialogButtonBox QPushButton { min-width: 82px; }
 QCheckBox { color: #46536a; spacing: 8px; }
 QToolTip { color: #f8faff; background: #26344b; border: 0; padding: 6px 8px; }
 """
+
+
+def _line_icon(path, color="#718096"):
+    pixmap = QPixmap()
+    pixmap.loadFromData((
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">'
+        f'<path d="{path}" fill="none" stroke="{color}" stroke-width="1.7" '
+        'stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    ).encode())
+    return QIcon(pixmap)
 
 
 class QuestionDialog(QDialog):
@@ -191,36 +212,40 @@ class MainWindow(QMainWindow):
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(222)
+        sidebar.setFixedWidth(188)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(15, 22, 15, 18)
+        sidebar_layout.setContentsMargins(12, 20, 12, 16)
         sidebar_layout.setSpacing(7)
 
         brand_row = QHBoxLayout()
-        brand_mark = QLabel("知")
-        brand_mark.setObjectName("brandMark")
+        brand_mark = QLabel()
+        brand_mark.setPixmap(QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "app_icon.svg")).scaled(
+            36, 36, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        ))
         brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        brand_mark.setFixedSize(42, 42)
+        brand_mark.setFixedSize(36, 36)
         brand_text = QVBoxLayout()
         brand_title = QLabel("AI 错题本")
         brand_title.setStyleSheet("font-size:15px;font-weight:700;color:#1e2b40;")
-        brand_caption = QLabel("PERSONAL STUDY SPACE")
-        brand_caption.setStyleSheet("font-size:8px;color:#9aa5b5;letter-spacing:1px;")
+        brand_caption = QLabel("收集 · 整理 · 复习")
+        brand_caption.setObjectName("muted")
         brand_text.addWidget(brand_title)
         brand_text.addWidget(brand_caption)
         brand_row.addWidget(brand_mark)
         brand_row.addLayout(brand_text)
         brand_row.addStretch()
         sidebar_layout.addLayout(brand_row)
-        sidebar_layout.addSpacing(26)
+        sidebar_layout.addSpacing(20)
 
         section_label = QLabel("学习空间")
         section_label.setStyleSheet("color:#9aa5b5;font-size:11px;padding:0 10px 5px;")
         sidebar_layout.addWidget(section_label)
         self._navigation_buttons = []
 
-        def add_nav(text, callback, page_key=None, active=False, utility=False):
+        def add_nav(text, callback, icon_path, page_key=None, active=False, utility=False):
             button = QPushButton(text)
+            button.setIcon(_line_icon(icon_path))
+            button.setIconSize(QSize(18, 18))
             button.setObjectName(
                 "navButtonActive" if active else "navUtility" if utility else "navButton"
             )
@@ -231,10 +256,11 @@ class MainWindow(QMainWindow):
                 self._navigation_buttons.append((button, page_key))
             return button
 
-        add_nav("▦  我的题库", self.show_library, page_key="library", active=True)
-        add_nav("✦  AI 识题", self.recognize_selected, page_key="recognition")
-        add_nav("▶  开始练习", self.start_practice, page_key="practice")
-        add_nav("◷  练习记录", self.show_history, page_key="history")
+        recognition_icon = "M12 3l2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5z"
+        add_nav("我的题库", self.show_library, "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z", page_key="library", active=True)
+        add_nav("AI 识题", self.recognize_selected, recognition_icon, page_key="recognition")
+        add_nav("开始练习", self.start_practice, "M7 4l13 8-13 8z", page_key="practice")
+        add_nav("练习记录", self.show_history, "M21 12a9 9 0 1 1-18 0 9 9 0 1 1 18 0 M12 7v5l3 2", page_key="history")
         sidebar_layout.addSpacing(18)
         divider = QFrame()
         divider.setFrameShape(QFrame.Shape.HLine)
@@ -244,17 +270,14 @@ class MainWindow(QMainWindow):
         section_label = QLabel("管理")
         section_label.setStyleSheet("color:#9aa5b5;font-size:11px;padding:0 10px 5px;")
         sidebar_layout.addWidget(section_label)
-        add_nav("⚙  设置与模型服务", self.manage_profiles, page_key="settings", utility=True)
-        add_nav("↓  备份数据", self.create_backup, utility=True)
-        add_nav("↻  恢复备份", self.restore_backup, utility=True)
+        add_nav("设置", self.manage_profiles, "M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M8 15v6", page_key="settings", utility=True)
+        add_nav("备份数据", self.create_backup, "M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5", utility=True)
+        add_nav("恢复备份", self.restore_backup, "M3 10a9 9 0 1 1 1 8 M3 4v6h6", utility=True)
         sidebar_layout.addStretch()
 
         local_badge = QFrame()
-        local_badge.setStyleSheet(
-            "background:#f5f7fb;border:1px solid #edf0f5;border-radius:9px;"
-        )
         local_layout = QVBoxLayout(local_badge)
-        local_layout.setContentsMargins(12, 10, 12, 10)
+        local_layout.setContentsMargins(10, 10, 10, 0)
         local_title = QLabel("●  本地空间")
         local_title.setStyleSheet("color:#31815d;font-size:11px;font-weight:700;")
         local_caption = QLabel("题库数据保存在此设备")
@@ -265,7 +288,8 @@ class MainWindow(QMainWindow):
 
         title = QLabel("我的题库")
         title.setObjectName("pageTitle")
-        subtitle = QLabel("整理错题，按计划复习，让每次练习都看得见进步。")
+        title.setStyleSheet("font-size:22px;")
+        subtitle = QLabel("收录题目，整理思路，安排下一次复习")
         subtitle.setObjectName("pageSubtitle")
         title_block = QVBoxLayout()
         title_block.setSpacing(4)
@@ -274,10 +298,11 @@ class MainWindow(QMainWindow):
 
         self.add_button = QPushButton("＋  新增题目")
         self.add_button.setObjectName("primaryButton")
-        self.add_button.setMinimumHeight(42)
-        self.recognize_button = QPushButton("✦  AI 识题")
+        self.add_button.setMinimumHeight(34)
+        self.recognize_button = QPushButton("AI 识题")
+        self.recognize_button.setIcon(_line_icon(recognition_icon, "#3759b2"))
         self.recognize_button.setObjectName("softButton")
-        self.recognize_button.setMinimumHeight(42)
+        self.recognize_button.setMinimumHeight(34)
         self.add_button.clicked.connect(self.add_question)
         self.recognize_button.clicked.connect(self.recognize_selected)
         page_header = QHBoxLayout()
@@ -288,45 +313,36 @@ class MainWindow(QMainWindow):
 
         self.stat_values = {}
         stats = QHBoxLayout()
-        stats.setSpacing(12)
-        for key, caption, accent in (
-            ("total", "题库题目", "statAccentBlue"),
-            ("wrong", "已标记错题", "statAccentRed"),
-            ("due", "当前待复习", "statAccentAmber"),
+        stats.setSpacing(8)
+        for key, caption in (
+            ("total", "全部题目"),
+            ("wrong", "错题"),
+            ("due", "待复习"),
         ):
-            card = QFrame()
-            card.setObjectName("statCard")
-            card_layout = QHBoxLayout(card)
-            card_layout.setContentsMargins(0, 13, 16, 13)
-            card_layout.setSpacing(14)
-            color_bar = QFrame()
-            color_bar.setObjectName(accent)
-            color_bar.setFixedWidth(4)
-            card_text = QVBoxLayout()
-            card_text.setSpacing(2)
+            if key != "total":
+                separator = QLabel("  /  ")
+                separator.setObjectName("muted")
+                stats.addWidget(separator)
             value = QLabel("0")
             value.setObjectName("statValue")
             label = QLabel(caption)
             label.setObjectName("cardCaption")
-            card_text.addWidget(value)
-            card_text.addWidget(label)
-            card_layout.addWidget(color_bar)
-            card_layout.addLayout(card_text)
-            card_layout.addStretch()
-            stats.addWidget(card, 1)
+            stats.addWidget(label)
+            stats.addWidget(value)
             self.stat_values[key] = value
+        stats.addStretch()
 
         self.search = QLineEdit()
-        self.search.setMinimumHeight(40)
+        self.search.setMinimumHeight(34)
         self.search.setClearButtonEnabled(True)
         self.search.setPlaceholderText("搜索题干关键词…")
 
         self.subject_filter = QComboBox()
-        self.subject_filter.setMinimumWidth(130)
+        self.subject_filter.setMinimumWidth(100)
         self.type_filter = QComboBox()
-        self.type_filter.setMinimumWidth(130)
+        self.type_filter.setMinimumWidth(100)
         self.state_filter = QComboBox()
-        self.state_filter.setMinimumWidth(150)
+        self.state_filter.setMinimumWidth(110)
         for label, value in (
             ("全部状态", "all"),
             ("错题", "wrong"),
@@ -338,37 +354,22 @@ class MainWindow(QMainWindow):
             self.state_filter.addItem(label, value)
 
         self.attach_button = QPushButton("图片附件")
-        self.edit_button = QPushButton("编辑")
+        self.edit_button = QPushButton("编辑题目")
+        self.edit_button.setObjectName("softButton")
         self.delete_button = QPushButton("删除")
         self.delete_button.setObjectName("dangerButton")
         self.attach_button.clicked.connect(self.manage_attachments)
         self.edit_button.clicked.connect(self.edit_question)
         self.delete_button.clicked.connect(self.delete_question)
 
-        toolbar = QFrame()
-        toolbar.setObjectName("toolbarCard")
-        toolbar_layout = QVBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(14, 13, 14, 13)
-        toolbar_layout.setSpacing(12)
-        search_row = QHBoxLayout()
-        search_row.addWidget(self.search, 1)
         filters = QHBoxLayout()
-        filters.setSpacing(9)
-        filter_label = QLabel("筛选条件")
-        filter_label.setStyleSheet("color:#7c899d;font-size:12px;font-weight:600;")
-        filters.addWidget(filter_label)
-        filters.addWidget(self.subject_filter)
-        filters.addWidget(self.type_filter)
-        filters.addWidget(self.state_filter)
-        filters.addStretch()
-        filters.addWidget(self.attach_button)
-        filters.addWidget(self.edit_button)
-        filters.addWidget(self.delete_button)
-        toolbar_layout.addLayout(search_row)
-        toolbar_layout.addLayout(filters)
+        filters.setSpacing(6)
+        filters.addWidget(self.subject_filter, 1)
+        filters.addWidget(self.type_filter, 1)
+        filters.addWidget(self.state_filter, 1)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["学科", "题型", "题目内容", "标记"])
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["题目", "状态"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -376,25 +377,18 @@ class MainWindow(QMainWindow):
         self.table.setShowGrid(False)
         self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(54)
+        self.table.verticalHeader().setDefaultSectionSize(68)
         header = self.table.horizontalHeader()
-        header.setFixedHeight(42)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        for column in (0, 1, 3):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        header.setFixedHeight(36)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(1, 76)
         self.table.cellDoubleClicked.connect(lambda *_: self.edit_question())
         self.table.selectionModel().selectionChanged.connect(self._update_actions)
         self.search.textChanged.connect(self.refresh)
         self.subject_filter.currentIndexChanged.connect(self.refresh)
         self.type_filter.currentIndexChanged.connect(self.refresh)
         self.state_filter.currentIndexChanged.connect(self.refresh)
-        self._refresh_filter_options()
-
-        table_card = QFrame()
-        table_card.setObjectName("tableCard")
-        table_layout = QVBoxLayout(table_card)
-        table_layout.setContentsMargins(8, 8, 8, 8)
-        table_layout.addWidget(self.table)
 
         self.empty_label = QLabel()
         self.empty_label.setObjectName("muted")
@@ -407,7 +401,7 @@ class MainWindow(QMainWindow):
         self.empty_action.setObjectName("primaryButton")
         self.empty_action.clicked.connect(self._empty_action)
         empty_card = QFrame()
-        empty_card.setObjectName("emptyCard")
+        empty_card.setStyleSheet("background:white;")
         empty_layout = QVBoxLayout(empty_card)
         empty_layout.addStretch(1)
         empty_layout.addWidget(self.empty_title)
@@ -417,7 +411,7 @@ class MainWindow(QMainWindow):
 
         self.content = QStackedWidget()
         self.content.addWidget(empty_card)
-        self.content.addWidget(table_card)
+        self.content.addWidget(self.table)
 
         list_header = QHBoxLayout()
         list_title = QLabel("题目列表")
@@ -428,10 +422,67 @@ class MainWindow(QMainWindow):
         list_header.addStretch()
         list_header.addWidget(self.result_count)
 
-        list_section = QVBoxLayout()
-        list_section.setSpacing(10)
+        library_panel = QFrame()
+        library_panel.setObjectName("libraryPanel")
+        library_panel.setMinimumWidth(360)
+        list_section = QVBoxLayout(library_panel)
+        list_section.setContentsMargins(18, 18, 18, 12)
+        list_section.setSpacing(12)
+        list_section.addWidget(self.search)
+        list_section.addLayout(filters)
         list_section.addLayout(list_header)
         list_section.addWidget(self.content, 1)
+        list_hint = QLabel("双击编辑题目 · 拖入图片可开始识题")
+        list_hint.setObjectName("muted")
+        list_section.addWidget(list_hint)
+
+        detail_panel = QFrame()
+        detail_panel.setObjectName("detailPanel")
+        detail_panel.setMinimumWidth(300)
+        detail_layout = QVBoxLayout(detail_panel)
+        detail_layout.setContentsMargins(20, 20, 20, 12)
+        detail_layout.setSpacing(12)
+        self.preview_title = QLabel("题目详情")
+        self.preview_title.setObjectName("detailTitle")
+        self.preview_meta = QLabel("选择一道题目，查看完整内容")
+        self.preview_meta.setObjectName("muted")
+        self.preview_meta.setTextFormat(Qt.TextFormat.PlainText)
+        self.preview_meta.setWordWrap(True)
+        self.preview_tabs = QTabWidget()
+        self.preview_stem = QTextBrowser()
+        self.preview_solution = QTextBrowser()
+        for browser in (self.preview_stem, self.preview_solution):
+            browser.setObjectName("previewText")
+            browser.setOpenLinks(False)
+        self.preview_tabs.addTab(self.preview_stem, "题目内容")
+        self.preview_tabs.addTab(self.preview_solution, "答案与解析")
+        self._preview_id = None
+        detail_actions = QHBoxLayout()
+        detail_actions.addWidget(self.edit_button)
+        detail_actions.addWidget(self.attach_button)
+        detail_actions.addStretch()
+        detail_actions.addWidget(self.delete_button)
+        detail_layout.addWidget(self.preview_title)
+        detail_layout.addWidget(self.preview_meta)
+        detail_layout.addWidget(self.preview_tabs, 1)
+        detail_layout.addLayout(detail_actions)
+
+        self.library_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.library_splitter.setHandleWidth(5)
+        self.library_splitter.setChildrenCollapsible(False)
+        self.library_splitter.addWidget(library_panel)
+        self.library_splitter.addWidget(detail_panel)
+        self.library_splitter.setStretchFactor(0, 3)
+        self.library_splitter.setStretchFactor(1, 2)
+        self.library_splitter.setSizes([620, 430])
+
+        workspace_header = QFrame()
+        workspace_header.setObjectName("workspaceHeader")
+        header_layout = QVBoxLayout(workspace_header)
+        header_layout.setContentsMargins(22, 18, 22, 14)
+        header_layout.setSpacing(12)
+        header_layout.addLayout(page_header)
+        header_layout.addLayout(stats)
 
         central = QWidget()
         central.setObjectName("centralPage")
@@ -441,12 +492,10 @@ class MainWindow(QMainWindow):
         shell.addWidget(sidebar)
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(30, 25, 30, 18)
-        layout.setSpacing(15)
-        layout.addLayout(page_header)
-        layout.addLayout(stats)
-        layout.addWidget(toolbar)
-        layout.addLayout(list_section, 1)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(workspace_header)
+        layout.addWidget(self.library_splitter, 1)
         self.page_stack = QStackedWidget()
         self.page_stack.addWidget(page)
         self._pages = {"library": page}
@@ -469,8 +518,8 @@ class MainWindow(QMainWindow):
             self, self.capture_screenshot, self.screenshot_shortcut
         )
         self._update_screenshot_status()
+        self._refresh_filter_options()
         self.refresh()
-        self._update_actions()
 
     def capture_screenshot(self):
         if self._screenshot_overlays:
@@ -617,22 +666,29 @@ class MainWindow(QMainWindow):
             or self.state_filter.currentData() != "all"
         )
         self.result_count.setText(f"找到 {len(rows)} 道题" if filtered else f"共 {len(rows)} 道题")
-        self.table.setRowCount(len(rows))
-        for row_index, question in enumerate(rows):
-            values = [
-                question["subject"],
-                question["question_type"],
-                question["stem"].replace("\n", " "),
-                "● 错题" if question["is_wrong"] else "",
-            ]
-            for column, value in enumerate(values):
-                item = QTableWidgetItem(value)
-                item.setToolTip(question["stem"] if column == 2 else value)
-                if column == 3 and question["is_wrong"]:
-                    item.setForeground(Qt.GlobalColor.darkRed)
-                if column == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, question["id"])
-                self.table.setItem(row_index, column, item)
+        selected_id = self._selected_id()
+        with QSignalBlocker(self.table.selectionModel()):
+            self.table.setRowCount(0)
+            self.table.setRowCount(len(rows))
+            selected_row = 0
+            for row_index, question in enumerate(rows):
+                metadata = " · ".join((question["subject"] or "未分类", question["question_type"] or "未设题型"))
+                values = [
+                    " ".join(question["stem"].split()) + "\n" + metadata,
+                    "● 错题" if question["is_wrong"] else "普通",
+                ]
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setToolTip(question["stem"] if column == 0 else value)
+                    if column == 1 and question["is_wrong"]:
+                        item.setForeground(Qt.GlobalColor.darkRed)
+                    if column == 0:
+                        item.setData(Qt.ItemDataRole.UserRole, question["id"])
+                    self.table.setItem(row_index, column, item)
+                if question["id"] == selected_id:
+                    selected_row = row_index
+            if rows:
+                self.table.selectRow(selected_row)
         if rows:
             self.content.setCurrentIndex(1)
         else:
@@ -665,10 +721,43 @@ class MainWindow(QMainWindow):
         self.state_filter.setCurrentIndex(0)
 
     def _update_actions(self, *_):
-        has_selection = self._selected_id() is not None
+        question_id = self._selected_id()
+        has_selection = question_id is not None
         self.attach_button.setEnabled(has_selection)
         self.edit_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)
+        self._update_preview(question_id)
+
+    def _update_preview(self, question_id):
+        question = None
+        error_message = "在左侧选择题目，即可在这里阅读题干。"
+        if question_id is not None:
+            try:
+                question = store.get_question(question_id)
+            except sqlite3.Error as error:
+                error_message = f"无法读取题目，请稍后重试。\n{error}"
+        if question_id != self._preview_id or question is None:
+            self.preview_tabs.setCurrentIndex(0)
+        self._preview_id = question_id
+        self.preview_tabs.setTabEnabled(1, question is not None)
+        if question is None:
+            self.preview_title.setText("题目详情")
+            self.preview_meta.setText("选择一道题目，查看完整内容")
+            self.preview_stem.setPlainText(error_message)
+            self.preview_solution.clear()
+            return
+        self.preview_title.setText(f"题目 #{question_id}")
+        self.preview_meta.setText(" · ".join((
+            question["subject"] or "未分类",
+            question["question_type"] or "未设题型",
+            "已标记为错题" if question["is_wrong"] else "普通题目",
+        )))
+        self.preview_stem.setPlainText(question["stem"])
+        answer = escape(question["answer"] or "暂未填写参考答案").replace("\n", "<br>")
+        explanation = escape(question["explanation"] or "暂未填写解析").replace("\n", "<br>")
+        self.preview_solution.setHtml(
+            f"<h3>参考答案</h3><p>{answer}</p><br><h3>解析</h3><p>{explanation}</p>"
+        )
 
     def _refresh_filter_options(self):
         selected_subject = self.subject_filter.currentData()
