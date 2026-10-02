@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from app.database import store
 from app.services.grading import grade_answer
 from app.ui.motion import AnimatedButton
+from app.ui.math_text import MathLabel
 from app.ui.theme import TEXT
 
 
@@ -121,7 +122,7 @@ class PracticeDialog(QDialog):
         self.progress = QLabel()
         self.progress.setObjectName("muted")
         self.progress.setStyleSheet("font-weight: 600;")
-        self.stem = QLabel()
+        self.stem = MathLabel()
         self.stem.setWordWrap(True)
         self.stem.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.stem.setObjectName("practiceStem")
@@ -135,7 +136,7 @@ class PracticeDialog(QDialog):
         self.reveal_button.setObjectName("primaryButton")
         self.reveal_button.clicked.connect(self.submit_answer)
 
-        self.solution = QLabel()
+        self.solution = MathLabel()
         self.solution.setWordWrap(True)
         self.solution.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.solution.setObjectName("practiceSolution")

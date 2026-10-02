@@ -1,7 +1,6 @@
 import random
 import sqlite3
 import tempfile
-from html import escape
 from pathlib import Path
 import zipfile
 
@@ -21,7 +20,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
     QStackedWidget,
     QStyle,
     QStyledItemDelegate,
@@ -30,7 +28,6 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +37,7 @@ from app.services import backup, attachments
 from app.ui.attachments_dialog import AttachmentsDialog
 from app.ui.history_dialog import HistoryDialog
 from app.ui.motion import AnimatedButton, ContentFade
+from app.ui.math_text import MathBrowser, MathEditor
 from app.ui.mini_practice_window import MiniPracticeWindow
 from app.ui.image_recognition_dialog import ImageRecognitionDialog
 from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog
@@ -96,17 +94,17 @@ class QuestionDialog(QDialog):
         self.resize(600, 560)
         self.setStyleSheet(STYLE)
 
-        self.stem = QPlainTextEdit()
+        self.stem = MathEditor()
         self.stem.setMinimumHeight(105)
         self.stem.setPlaceholderText("输入题干")
         self.subject = QLineEdit()
         self.subject.setMinimumHeight(38)
         self.question_type = QLineEdit()
         self.question_type.setMinimumHeight(38)
-        self.answer = QPlainTextEdit()
+        self.answer = MathEditor()
         self.answer.setMinimumHeight(65)
         self.answer.setPlaceholderText("标准答案；多个可接受答案用 | 分隔")
-        self.explanation = QPlainTextEdit()
+        self.explanation = MathEditor()
         self.explanation.setMinimumHeight(85)
         self.is_wrong = QCheckBox("标记为错题")
         self.validation_status = QLabel()
@@ -426,8 +424,8 @@ class MainWindow(QMainWindow):
         self.preview_meta.setTextFormat(Qt.TextFormat.PlainText)
         self.preview_meta.setWordWrap(True)
         self.preview_tabs = QTabWidget()
-        self.preview_stem = QTextBrowser()
-        self.preview_solution = QTextBrowser()
+        self.preview_stem = MathBrowser()
+        self.preview_solution = MathBrowser()
         for browser in (self.preview_stem, self.preview_solution):
             browser.setObjectName("previewText")
             browser.setOpenLinks(False)
@@ -742,11 +740,9 @@ class MainWindow(QMainWindow):
             "已标记为错题" if question["is_wrong"] else "普通题目",
         )))
         self.preview_stem.setPlainText(question["stem"])
-        answer = escape(question["answer"] or "暂未填写参考答案").replace("\n", "<br>")
-        explanation = escape(question["explanation"] or "暂未填写解析").replace("\n", "<br>")
-        self.preview_solution.setHtml(
-            f"<h3>参考答案</h3><p>{answer}</p><br><h3>解析</h3><p>{explanation}</p>"
-        )
+        answer = question["answer"] or "暂未填写参考答案"
+        explanation = question["explanation"] or "暂未填写解析"
+        self.preview_solution.setSections((("参考答案", answer), ("解析", explanation)))
         if changed:
             self._motion.play(self.preview_tabs.currentWidget())
 

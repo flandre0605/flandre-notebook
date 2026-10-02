@@ -10,6 +10,7 @@ STYLE = """
 QMainWindow, QDialog { background: #fff8fb; }
 QWidget#miniPracticeWindow { background: #fff8fb; }
 QWidget#wordStudyCanvas { background: #fff8fb; }
+QWidget#recognitionDraftBody { background: #fff8fb; }
 QScrollArea#wordStudyScroll { background: transparent; border: none; }
 QLabel { color: #503845; }
 QLabel#pageTitle { color: #422e3b; font-size: 27px; font-weight: 700; }
@@ -36,6 +37,7 @@ QFrame#imageDropZone { background: #fffcfd; border: 2px dashed #ddb8c8; border-r
 QFrame#imageDropZone[dragging="true"] { background: #fbe8f0; border-color: #b54b72; }
 QScrollArea#miniPracticeScroll { background: transparent; border: 1px solid #ecd5df; border-radius: 12px; }
 QTextBrowser#previewText { background: white; border: none; padding: 8px 4px; color: #503845; font-size: 14px; }
+QTextBrowser#mathPreview { background: #fffcfd; border: 1px solid #ecd5df; border-radius: 10px; padding: 8px 10px; color: #503845; font-size: 14px; }
 QSplitter::handle { background: #f7e6ed; }
 QSplitter::handle:hover { background: #e3b3c5; }
 QTabWidget::pane { border: none; border-top: 1px solid #ecd5df; }

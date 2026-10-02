@@ -250,7 +250,12 @@ class ImageRecognitionDialog(QDialog):
         self.draft_editor = editor
         self.views.addWidget(editor)
         self.views.setCurrentWidget(editor)
-        self.resize(max(980, self.width()), max(700, self.height()))
+        available = self.screen().availableGeometry()
+        self.resize(min(max(980, self.width()), available.width() - 32),
+                    min(max(700, self.height()), available.height() - 64))
+        frame = self.frameGeometry()
+        frame.moveCenter(available.center())
+        self.move(frame.topLeft())
 
     def _return_to_input(self, editor):
         self.views.setCurrentWidget(self.input_page)

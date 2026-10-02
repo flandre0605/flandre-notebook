@@ -26,6 +26,10 @@ def grade_answer(question_type: str, expected: str, submitted: str) -> bool | No
     if any(word in kind for word in ("解答", "简答", "主观", "论述", "证明", "essay", "subjective")):
         return None
 
+    if re.search(r"\\[A-Za-z]+|\\[([]|\$", expected):
+        # Plain text comparison cannot establish equivalence to a LaTeX formula.
+        return True if _normalise(expected) == _normalise(submitted) else None
+
     candidates = [_normalise(value) for value in expected.split("|") if value.strip()]
     actual = _normalise(submitted)
     if "判断" in kind or "truefalse" in kind or "true_false" in kind:

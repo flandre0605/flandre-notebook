@@ -2,9 +2,10 @@ from PySide6.QtCore import QSize, Qt, Signal, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPlainTextEdit, QVBoxLayout,
+    QLineEdit, QMessageBox, QScrollArea, QFrame, QVBoxLayout, QWidget,
 )
 from app.ui.motion import AnimatedButton
+from app.ui.math_text import MathEditor
 from app.ui.theme import STYLE
 
 
@@ -25,14 +26,14 @@ class RecognitionDraftDialog(QDialog):
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image.setMinimumSize(350, 300)
         self._image_pixmap = QPixmap(str(image_path))
-        self.stem = QPlainTextEdit()
-        self.stem.setMinimumHeight(110)
+        self.stem = MathEditor()
+        self.stem.setMinimumHeight(150)
         self.subject = QLineEdit()
         self.question_type = QLineEdit()
-        self.answer = QPlainTextEdit()
-        self.answer.setMinimumHeight(65)
-        self.explanation = QPlainTextEdit()
-        self.explanation.setMinimumHeight(100)
+        self.answer = MathEditor()
+        self.answer.setMinimumHeight(130)
+        self.explanation = MathEditor()
+        self.explanation.setMinimumHeight(150)
         self.is_wrong = QCheckBox("标记为错题")
         self.is_wrong.setChecked(bool(question["is_wrong"]) if question is not None else True)
 
@@ -48,9 +49,17 @@ class RecognitionDraftDialog(QDialog):
         for label, field in (("题干 *", self.stem), ("学科", self.subject), ("题型", self.question_type), ("答案", self.answer), ("解析", self.explanation)):
             form.addRow(label, field)
         form.addRow("", self.is_wrong)
-        content = QHBoxLayout()
+        body = QWidget()
+        body.setObjectName("recognitionDraftBody")
+        body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        content = QHBoxLayout(body)
+        content.setContentsMargins(0, 0, 0, 0)
         content.addWidget(self.image, 1)
         content.addLayout(form, 2)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(body)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("返回识题")
         save_button = self.buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -80,7 +89,7 @@ class RecognitionDraftDialog(QDialog):
         review_row.addWidget(self.question_selector)
         review_row.addWidget(self.remove_draft_button)
         layout.addLayout(review_row)
-        layout.addLayout(content, 1)
+        layout.addWidget(scroll, 1)
         layout.addWidget(self.validation_status)
         layout.addWidget(self.buttons)
         self._load_draft(0)
