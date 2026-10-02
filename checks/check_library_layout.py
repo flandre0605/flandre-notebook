@@ -9,8 +9,8 @@ from unittest.mock import patch
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtGui import QFont, QFontDatabase
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
+from PySide6.QtWidgets import QApplication, QLabel
 
 from app.database import store
 from app.ui.main_window import MainWindow
@@ -22,6 +22,9 @@ def check(preview_path=None):
         QFontDatabase.addApplicationFont("C:/Windows/Fonts/msyh.ttc")
         QFontDatabase.addApplicationFont("C:/Windows/Fonts/msyhbd.ttc")
     app.setFont(QFont("Microsoft YaHei UI", 10))
+    icon = QIcon(str(Path(__file__).resolve().parents[1] / "assets" / "flandre_icon.ico"))
+    for size in (16, 32, 48, 256):
+        assert not icon.pixmap(size, size).isNull()
     connection = store._connection
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "questions.db"
@@ -40,6 +43,7 @@ def check(preview_path=None):
                                          is_wrong=wrong, answer=answer,
                                          explanation="配方：f(x) = (x − 1)² − 4。\n注意区间端点。<提示>"))
             window = MainWindow()
+            assert not window.findChild(QLabel, "appBrandIcon").pixmap().isNull()
             window.show()
             app.processEvents()
             assert window.table.rowCount() == 5

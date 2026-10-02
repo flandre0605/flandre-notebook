@@ -219,7 +219,8 @@ class MainWindow(QMainWindow):
 
         brand_row = QHBoxLayout()
         brand_mark = QLabel()
-        brand_mark.setPixmap(QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "app_icon.svg")).scaled(
+        brand_mark.setObjectName("appBrandIcon")
+        brand_mark.setPixmap(QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "flandre_icon.png")).scaled(
             36, 36, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
         ))
         brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)

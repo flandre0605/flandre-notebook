@@ -14,7 +14,7 @@ def main() -> int:
     app.setOrganizationName("FlandreNotebook")
     app.setApplicationName("AI 错题本")
     app.setFont(QFont("Microsoft YaHei UI", 10))
-    icon_path = Path(__file__).resolve().parent / "assets" / "app_icon.ico"
+    icon_path = Path(__file__).resolve().parent / "assets" / "flandre_icon.ico"
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
     window = MainWindow()
