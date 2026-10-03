@@ -546,13 +546,39 @@ class MainWindow(QMainWindow):
         self.preview_tabs = QTabWidget()
         self.preview_stem = MathBrowser()
         self.preview_solution = MathBrowser()
-        self.preview_notes = MathBrowser()
-        for browser in (self.preview_stem, self.preview_solution, self.preview_notes):
+        self.preview_notes = MathEditor()
+        self.preview_notes.setPlaceholderText("直接写下思路、易错点或复习提醒；停止输入后自动保存。")
+        self._pending_notes = {}
+        self._notes_baseline = ""
+        self._notes_timer = QTimer(self)
+        self._notes_timer.setSingleShot(True)
+        self._notes_timer.setInterval(600)
+        self._notes_timer.timeout.connect(self._flush_notes)
+        self.preview_notes.source.textChanged.connect(self._notes_changed)
+        self.notes_status = QLabel("请选择一道题目。")
+        self.notes_status.setObjectName("muted")
+        self.notes_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.notes_status.setWordWrap(True)
+        self.save_notes_button = AnimatedButton("保存笔记")
+        self.save_notes_button.setObjectName("primaryButton")
+        self.save_notes_button.clicked.connect(self._flush_notes)
+        self.reset_notes_button = AnimatedButton("撤销修改")
+        self.reset_notes_button.clicked.connect(self._reset_notes)
+        notes_page = QWidget()
+        notes_layout = QVBoxLayout(notes_page)
+        notes_layout.setContentsMargins(0, 0, 0, 0)
+        notes_layout.addWidget(self.preview_notes, 1)
+        notes_footer = QHBoxLayout()
+        notes_footer.addWidget(self.notes_status, 1)
+        notes_footer.addWidget(self.reset_notes_button)
+        notes_footer.addWidget(self.save_notes_button)
+        notes_layout.addLayout(notes_footer)
+        for browser in (self.preview_stem, self.preview_solution):
             browser.setObjectName("previewText")
             browser.setOpenLinks(False)
         self.preview_tabs.addTab(self.preview_stem, "题目内容")
         self.preview_tabs.addTab(self.preview_solution, "答案与解析")
-        self.preview_tabs.addTab(self.preview_notes, "个人笔记")
+        self.preview_tabs.addTab(notes_page, "个人笔记")
         self.preview_tabs.currentChanged.connect(
             lambda _index: self._motion.play(self.preview_tabs.currentWidget())
         )
@@ -811,6 +837,8 @@ class MainWindow(QMainWindow):
         page = self._pages.get(key)
         if page is None:
             return
+        if key != "library":
+            self._flush_notes()
         if key != "vocabulary" and "vocabulary" in self._pages:
             self.vocabulary_page.speech.stop()
         self.restore_mini_practice()
@@ -900,6 +928,7 @@ class MainWindow(QMainWindow):
         self._show_page("library")
 
     def _save_workspaces(self):
+        notes_saved = self._flush_notes()
         editor = self._page_dialogs.get("question")
         if editor is not None:
             editor.save_draft()
@@ -911,9 +940,12 @@ class MainWindow(QMainWindow):
         for dialog in self._recognition_dialogs:
             if hasattr(dialog, "save_progress"):
                 dialog.save_progress()
+        return notes_saved
 
     def closeEvent(self, event):
-        self._save_workspaces()
+        if not self._save_workspaces():
+            event.ignore()
+            return
         if "vocabulary" in self._pages:
             self.vocabulary_page.cancel_translation()
             self.vocabulary_page.speech.stop()
@@ -1016,6 +1048,8 @@ class MainWindow(QMainWindow):
 
     def _update_preview(self, question_id):
         changed = question_id != self._preview_id
+        if changed:
+            self._flush_notes()
         question = None
         error_message = "在左侧选择题目，即可在这里阅读题干。"
         if question_id is not None:
@@ -1023,17 +1057,22 @@ class MainWindow(QMainWindow):
                 question = store.get_question(question_id)
             except sqlite3.Error as error:
                 error_message = f"无法读取题目，请稍后重试。\n{error}"
-        if question_id != self._preview_id or question is None:
+        if question is None or (changed and self.preview_tabs.currentIndex() != 2):
             self.preview_tabs.setCurrentIndex(0)
         self._preview_id = question_id
         self.preview_tabs.setTabEnabled(1, question is not None)
         self.preview_tabs.setTabEnabled(2, question is not None)
+        self.preview_notes.setEnabled(question is not None)
         if question is None:
             self.preview_title.setText("题目详情")
             self.preview_meta.setText("选择一道题目，查看完整内容")
             self.preview_stem.setPlainText(error_message)
             self.preview_solution.clear()
-            self.preview_notes.clear()
+            with QSignalBlocker(self.preview_notes.source):
+                self.preview_notes.setPlainText("")
+            self.save_notes_button.setEnabled(False)
+            self.reset_notes_button.setEnabled(False)
+            self.notes_status.setText("请选择一道题目。")
             return
         self.preview_title.setText(f"题目 #{question_id}")
         self.preview_meta.setText(" · ".join((
@@ -1050,9 +1089,61 @@ class MainWindow(QMainWindow):
         answer = question["answer"] or "暂未填写参考答案"
         explanation = question["explanation"] or "暂未填写解析"
         self.preview_solution.setSections((("参考答案", answer), ("解析", explanation)))
-        self.preview_notes.setPlainText(question["notes"] or "暂未填写个人笔记")
+        self._notes_baseline = question["notes"]
+        notes = self._pending_notes.get(question_id, question["notes"])
+        # Refreshing the same selection must not reset the cursor or overwrite pending edits.
+        if changed or self.preview_notes.toPlainText() != notes:
+            with QSignalBlocker(self.preview_notes.source):
+                self.preview_notes.setPlainText(notes)
+                self.preview_notes.setCurrentIndex(1)
+        self.save_notes_button.setEnabled(question_id in self._pending_notes)
+        self.reset_notes_button.setEnabled(question_id in self._pending_notes)
+        self.notes_status.setText("未保存，点击保存笔记重试。" if question_id in self._pending_notes else "自动保存 · 可切换公式预览")
         if changed:
             self._motion.play(self.preview_tabs.currentWidget())
+
+    def _notes_changed(self):
+        question_id = self._preview_id
+        if question_id is None:
+            return
+        notes = self.preview_notes.toPlainText()
+        if notes == self._notes_baseline:
+            self._pending_notes.pop(question_id, None)
+            self.save_notes_button.setEnabled(False)
+            self.reset_notes_button.setEnabled(False)
+            self.notes_status.setText("内容未修改。")
+            return
+        self._pending_notes[question_id] = notes
+        self.save_notes_button.setEnabled(True)
+        self.reset_notes_button.setEnabled(True)
+        self.notes_status.setText("正在编辑，停止输入后自动保存…")
+        self._notes_timer.start()
+
+    def _reset_notes(self):
+        self.preview_notes.setPlainText(self._notes_baseline)
+        self.preview_notes.setCurrentIndex(1)
+
+    def _flush_notes(self):
+        self._notes_timer.stop()
+        for question_id, notes in list(self._pending_notes.items()):
+            try:
+                saved = store.save_question_notes(question_id, notes)
+            except (sqlite3.Error, ValueError, TypeError) as error:
+                message = f"题目 #{question_id} 笔记未保存：{error}。输入已保留，请修改或重试。"
+                self.statusBar().showMessage(message, 15000)
+                if question_id == self._preview_id:
+                    self.notes_status.setText(message)
+                continue
+            self._pending_notes.pop(question_id)
+            editor = self._page_dialogs.get("question")
+            if editor is not None and editor.draft_key == f"question:{question_id}":
+                editor.notes.setPlainText(saved)
+            if question_id == self._preview_id:
+                self._notes_baseline = notes
+                self.save_notes_button.setEnabled(False)
+                self.reset_notes_button.setEnabled(False)
+                self.notes_status.setText("笔记已保存。")
+        return not self._pending_notes
 
     def _refresh_filter_options(self):
         selected_subject = self.subject_filter.currentData()
@@ -1096,6 +1187,8 @@ class MainWindow(QMainWindow):
         return True
 
     def edit_question(self):
+        if not self._flush_notes():
+            return
         if "question" in self._pages:
             self._show_page("question")
             return
@@ -1134,6 +1227,7 @@ class MainWindow(QMainWindow):
             except sqlite3.Error as error:
                 QMessageBox.critical(self, "删除失败", f"题目没有删除：\n{error}")
                 return
+            self._pending_notes.pop(question_id, None)
             self._refresh_filter_options()
             self.refresh()
             self.statusBar().showMessage("题目已删除。", 5000)
@@ -1435,7 +1529,8 @@ class MainWindow(QMainWindow):
         ) != QMessageBox.StandardButton.Yes:
             return
         try:
-            self._save_workspaces()
+            if not self._save_workspaces():
+                raise ValueError("个人笔记尚未保存，请修正输入或重试后再备份。")
             backup.create_backup(destination)
         except (OSError, sqlite3.Error, ValueError) as error:
             QMessageBox.critical(self, "备份失败", str(error))
@@ -1458,7 +1553,8 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
-            self._save_workspaces()
+            if not self._save_workspaces():
+                raise ValueError("个人笔记尚未保存，请修正输入或重试后再恢复。")
             recovery = backup.restore_backup(path)
         except (OSError, sqlite3.Error, ValueError, zipfile.BadZipFile) as error:
             QMessageBox.critical(self, "恢复失败", str(error))

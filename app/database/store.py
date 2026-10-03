@@ -269,6 +269,23 @@ def save_question(question: dict, question_id: int | None = None, draft_key: str
         return question_id
 
 
+def save_question_notes(question_id: int, notes: str) -> str:
+    with _connection() as connection:
+        question = connection.execute("SELECT * FROM questions WHERE id = ?", (question_id,)).fetchone()
+        if question is None:
+            raise ValueError("题目已不存在，请返回题库重新选择。")
+        notes = validate_question({"notes": notes}, question)["notes"]
+        connection.execute("UPDATE questions SET notes = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (notes, question_id))
+        # A parked full editor must keep its other draft fields without restoring stale notes later.
+        key = f"question:{question_id}"
+        draft = connection.execute("SELECT payload FROM workspace_state WHERE key = ?", (key,)).fetchone()
+        if draft is not None:
+            state = json.loads(draft["payload"])
+            state = validate_question({**state, "notes": notes}, draft=True)
+            _write_workspace(connection, key, state)
+        return notes
+
+
 def delete_question(question_id: int) -> None:
     with _connection() as connection:
         connection.execute("DELETE FROM questions WHERE id = ?", (question_id,))
