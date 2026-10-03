@@ -1,4 +1,5 @@
 from uuid import uuid4
+import sqlite3
 
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QUrl
 from PySide6.QtGui import QKeySequence, QDesktopServices
@@ -16,6 +17,7 @@ from app.ui.motion import AnimatedButton
 from app.ui.theme import ACCENT, MUTED
 from app.ui.worker import Worker
 from app.ui.review_settings import ReviewSettings
+from app.ui.model_selection import fill_model_choices
 
 
 class ProfilesDialog(QDialog):
@@ -130,6 +132,34 @@ class ProfilesDialog(QDialog):
         layout.addLayout(right, 2)
         self.settings_tabs = QTabWidget()
         self.settings_tabs.addTab(models_page, "模型与截图")
+        default_page = QWidget()
+        default_layout = QVBoxLayout(default_page)
+        default_layout.setContentsMargins(24, 24, 24, 24)
+        default_layout.setSpacing(16)
+        default_title = QLabel("为不同任务选择默认模型")
+        default_title.setObjectName("sectionTitle")
+        default_layout.addWidget(default_title)
+        default_hint = QLabel("新截图使用默认识题配置，编辑单词或导入词表时使用默认文本配置。\n每次任务仍可手动切换；恢复识题草稿沿用原配置。")
+        default_hint.setObjectName("muted")
+        default_hint.setWordWrap(True)
+        default_layout.addWidget(default_hint)
+        self.default_vision = QComboBox()
+        self.default_text = QComboBox()
+        default_form = QFormLayout()
+        default_form.setVerticalSpacing(16)
+        default_form.addRow("截图识题", self.default_vision)
+        default_form.addRow("单词补全", self.default_text)
+        default_layout.addLayout(default_form)
+        self.save_defaults_button = AnimatedButton("保存默认模型")
+        self.save_defaults_button.setObjectName("primaryButton")
+        self.save_defaults_button.clicked.connect(self._save_default_models)
+        default_layout.addWidget(self.save_defaults_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.default_status = QLabel("未指定或配置不可用时，自动选择第一个可用配置。偏好保存在此设备。")
+        self.default_status.setWordWrap(True)
+        self.default_status.setObjectName("muted")
+        default_layout.addWidget(self.default_status)
+        default_layout.addStretch()
+        self.settings_tabs.addTab(default_page, "默认模型")
         self.review_settings = ReviewSettings()
         self.settings_tabs.addTab(self.review_settings, "复习设置")
         data_page = QWidget()
@@ -231,6 +261,8 @@ class ProfilesDialog(QDialog):
 
     def _reload(self, selected_id=None):
         self.review_settings.reload()
+        fill_model_choices(self.default_vision, "vision", default_picker=True)
+        fill_model_choices(self.default_text, "text", default_picker=True)
         self.rows = store.list_profiles()
         self.empty_hint.setVisible(not self.rows)
         self.profiles.clear()
@@ -241,6 +273,27 @@ class ProfilesDialog(QDialog):
             self.profiles.setCurrentRow(index)
         else:
             self._clear()
+
+    def _save_default_models(self):
+        choices = {"vision": self.default_vision.currentData(), "text": self.default_text.currentData()}
+        try:
+            for purpose, profile_id in choices.items():
+                if profile_id:
+                    profile = store.get_profile(profile_id)
+                    if profile is None or not profile["enabled"] or (purpose == "vision" and not profile["vision_enabled"]):
+                        self.default_status.setText("所选配置已不可用，请重新选择后保存。")
+                        fill_model_choices(self.default_vision, "vision", default_picker=True)
+                        fill_model_choices(self.default_text, "text", default_picker=True)
+                        return
+        except sqlite3.Error as error:
+            self.default_status.setText(f"读取模型配置失败，默认设置未保存：{error}")
+            return
+        settings = QSettings()
+        for purpose, profile_id in choices.items():
+            settings.setValue(f"default_models/{purpose}", profile_id or "")
+        settings.sync()
+        self.default_status.setText("默认模型已保存，下次新建任务时使用。" if settings.status() == QSettings.Status.NoError
+                                    else "偏好保存失败，请检查此设备的设置写入权限。")
 
     def _clear(self):
         for field in (self.name, self.base_url, self.endpoint_path, self.api_key):

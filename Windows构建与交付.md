@@ -50,6 +50,7 @@
 
 ```powershell
 .venv/Scripts/python.exe checks/check_storage.py
+.venv/Scripts/python.exe checks/check_model_selection.py
 .venv/Scripts/python.exe checks/check_windows_package.py dist/FlandreNotebook/FlandreNotebook.exe
 .venv/Scripts/python.exe checks/check_windows_installer.py dist/FlandreNotebook-0.2.0-preview.1-setup-x64.exe
 ```
@@ -60,7 +61,7 @@
 - 安装器：拒绝覆盖已存在的同一应用安装。安装到临时目录，运行已安装 EXE，卸载后确认测试题库和图片仍在；等待 Inno 的第二阶段卸载进程释放文件后清理临时目录。
 - `--verify-package <报告文件>` 是开发验收参数，只有提供 `FLANDRE_DATA_DIR` 时启用；使用单独的设置名称和空测试题库，不调用模型。
 
-本轮 16 项源码检查（原 15 项与目录迁移）通过。最终构建的实际 EXE 和安装器均已再次检查：Windows 11 桌面运行、固定尺寸单选图标、静音英语合成和语速、自定义全局热键回调、公式、PDF、ZIP 恢复与结构化选择题通过；卸载后测试题库与附件保留。后续每次重新构建都需重新执行检查。
+本轮 17 项源码检查（原 15 项、目录迁移与默认模型）通过。最终构建的实际 EXE 和安装器均已再次检查：Windows 11 桌面运行、默认模型设置与任务选择、固定尺寸单选图标、静音英语合成和语速、自定义全局热键回调、公式、PDF、ZIP 恢复与结构化选择题通过；卸载后测试题库与附件保留。后续每次重新构建都需重新执行检查。
 
 ## 真实模型验收与限制
 

@@ -17,6 +17,7 @@ from app.ui.recognition_draft_dialog import RecognitionDraftDialog
 from app.ui.worker import Worker
 from app.ui.motion import AnimatedButton, ContentFade
 from app.ui.theme import ICON_DIR, MUTED, TEXT
+from app.ui.model_selection import fill_model_choices
 
 
 class ImageDropZone(QFrame):
@@ -128,10 +129,7 @@ class ImageRecognitionDialog(QDialog):
         self.views = QStackedWidget()
         self.input_page = QWidget()
         self.profile = QComboBox()
-        self.profiles = store.list_profiles(enabled_only=True)
-        self.profiles = [profile for profile in self.profiles if profile["vision_enabled"]]
-        for profile in self.profiles:
-            self.profile.addItem(f"{profile['name']} · {profile['model_id']}", profile["id"])
+        self.profiles = fill_model_choices(self.profile, "vision")
         self.choose_button = AnimatedButton("选择图片…")
         self.choose_button.clicked.connect(self.choose_image)
         self.paste_button = AnimatedButton("粘贴图片（Ctrl+V）")

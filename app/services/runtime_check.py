@@ -29,6 +29,26 @@ def verify_package(app, window, report_path):
             assert (PROJECT_ROOT / "assets" / resource).exists(), resource
         credentials._require_secure_backend()  # Discover the backend without reading or writing a credential.
         report["credential_backend"] = type(credentials.keyring.get_keyring()).__name__
+        from app.ui.profiles_dialog import ProfilesDialog
+        from app.ui.image_recognition_dialog import ImageRecognitionDialog
+        from app.ui.model_selection import fill_model_choices
+        from PySide6.QtWidgets import QComboBox
+        for identity, vision in (("probe-text", False), ("probe-vision", True)):
+            store.save_profile(dict(name=identity, model_id="fixture", base_url="https://example.com/v1",
+                                    endpoint_path="/chat/completions", timeout_seconds=5,
+                                    vision_enabled=vision, enabled=True), identity)
+        defaults = ProfilesDialog(window)
+        defaults.default_vision.setCurrentIndex(defaults.default_vision.findData("probe-vision"))
+        defaults.default_text.setCurrentIndex(defaults.default_text.findData("probe-text"))
+        defaults._save_default_models()
+        recognition = ImageRecognitionDialog(parent=window)
+        assert recognition.profile.currentData() == "probe-vision"
+        text_choice = QComboBox()
+        fill_model_choices(text_choice, "text")
+        assert text_choice.currentData() == "probe-text"
+        recognition.close()
+        defaults.close()
+        report["default_models"] = True
         width, height, formula = _formula_image(r"\frac{1}{2}+x^2", False)
         assert width > 0 and height > 0 and formula
         question_id = store.save_question(dict(stem=r"Select $x^2$", question_type="单选题",

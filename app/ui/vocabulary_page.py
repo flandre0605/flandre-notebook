@@ -17,6 +17,7 @@ from app.ui.motion import AnimatedButton
 from app.ui.pronunciation import Pronunciation
 from app.ui.theme import ACCENT, MUTED
 from app.ui.worker import Worker
+from app.ui.model_selection import fill_model_choices
 
 
 class WordStudy(QWidget):
@@ -545,17 +546,14 @@ class VocabularyPage(QDialog):
             self.speech_tools.setVisible(page is not self.import_page)
         self.content_changed.emit()
 
-    def refresh_profiles(self):
-        selected = self.profile.currentData()
-        self.profile.clear()
+    def refresh_profiles(self, use_default=False):
         try:
-            for row in store.list_profiles(enabled_only=True):
-                self.profile.addItem(f"{row['name']} · {row['model_id']}", row["id"])
+            fill_model_choices(self.profile, "text", use_default=use_default)
+            self.profile.setToolTip("")
         except sqlite3.Error as error:
+            self.profile.clear()
+            self.profile.addItem("模型配置读取失败，请重试", None)
             self.profile.setToolTip(str(error))
-        if not self.profile.count():
-            self.profile.addItem("请先在模型服务中添加并启用配置", None)
-        self.profile.setCurrentIndex(max(0, self.profile.findData(selected)))
 
     def speak_selected(self):
         row = vocabulary.get_word(self.selected_id())
@@ -610,7 +608,7 @@ class VocabularyPage(QDialog):
         layout.addLayout(buttons)
 
     def show_import_draft(self, rows, filename):
-        self.refresh_profiles()
+        self.refresh_profiles(use_default=True)
         self.import_filename = filename
         with QSignalBlocker(self.import_table):
             self.import_table.setRowCount(len(rows))
@@ -895,7 +893,7 @@ class VocabularyPage(QDialog):
     def edit_word(self, word_id=None):
         if self._translation_busy:
             return
-        self.refresh_profiles()
+        self.refresh_profiles(use_default=True)
         try:
             row = vocabulary.get_word(word_id) if word_id is not None else None
             if word_id is not None and row is None:
