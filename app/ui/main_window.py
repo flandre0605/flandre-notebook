@@ -1,11 +1,12 @@
 import random
 import sqlite3
 import tempfile
+from collections import OrderedDict
 from pathlib import Path
 import zipfile
 
-from PySide6.QtCore import QRect, QSettings, QSignalBlocker, QSize, Qt
-from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QIcon, QPixmap
+from PySide6.QtCore import QRect, QSettings, QSignalBlocker, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QCursor, QFont, QFontMetrics, QGuiApplication, QIcon, QPixmap, QTextDocument, QTextOption
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -35,15 +36,18 @@ from PySide6.QtWidgets import (
 )
 
 from app.database import store, vocabulary
-from app.services import backup, attachments
+from app.question_data import question_text, validate_question
+from app.services import backup, attachments, recognition_drafts
 from app.ui.attachments_dialog import AttachmentsDialog
 from app.ui.history_dialog import HistoryDialog
 from app.ui.motion import AnimatedButton, ContentFade
-from app.ui.math_text import MathBrowser, MathEditor
+from app.ui.math_text import MathBrowser, MathEditor, math_html
 from app.ui.mini_practice_window import MiniPracticeWindow
 from app.ui.image_recognition_dialog import ImageRecognitionDialog
-from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog
+from app.ui.practice_dialog import PracticeDialog, PracticeSetupDialog, load_practice_progress
 from app.ui.profiles_dialog import ProfilesDialog
+from app.ui.question_files_dialog import QuestionFilesDialog
+from app.ui.options_editor import OptionsEditor
 from app.ui.screenshot import GlobalScreenshotHotkey, ScreenshotOverlay
 from app.ui.theme import ACCENT, MUTED, STYLE, TEXT
 from app.ui.vocabulary_page import VocabularyPage
@@ -60,28 +64,48 @@ def _line_icon(path, color=MUTED):
 
 
 class QuestionRowDelegate(QStyledItemDelegate):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._documents = OrderedDict()
+
     def paint(self, painter, option, index):
         styled = QStyleOptionViewItem(option)
         self.initStyleOption(styled, index)
         title, _, metadata = str(index.data() or "").partition("\n")
         styled.text = ""
         styled.widget.style().drawControl(QStyle.ControlElement.CE_ItemViewItem, styled, painter, styled.widget)
-        selected = bool(styled.state & QStyle.StateFlag.State_Selected)
         content = styled.rect.adjusted(12, 8, -12, -8)
         painter.save()
-        painter.setFont(styled.font)
-        painter.setPen(QColor("#913455" if selected else TEXT))
-        painter.drawText(
-            QRect(content.left(), content.top(), content.width(), 25),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            QFontMetrics(styled.font).elidedText(title, Qt.TextElideMode.ElideRight, content.width()),
-        )
+        key = (title, content.width(), styled.font.toString())
+        document = self._documents.get(key)
+        if document is None:
+            document = QTextDocument()
+            document.setDocumentMargin(0)
+            document.setDefaultFont(styled.font)
+            text_option = QTextOption()
+            text_option.setWrapMode(QTextOption.WrapMode.NoWrap)
+            document.setDefaultTextOption(text_option)
+            document.setDefaultStyleSheet(f"body {{ color: {TEXT}; }}")
+            document.setHtml(math_html(title, max_width=content.width()).replace("<br>", " "))
+            self._documents[key] = document
+            if len(self._documents) > 64:
+                self._documents.popitem(last=False)
+        else:
+            self._documents.move_to_end(key)
+        # Only visible rows are rendered; keep at most 64 preview documents.
+        painter.setClipRect(QRect(content.left(), content.top(), content.width(), 42))
+        scale = min(1.0, 42 / max(1, document.size().height()))
+        painter.translate(content.left(), content.top() + (42 - document.size().height() * scale) / 2)
+        painter.scale(scale, scale)
+        document.drawContents(painter)
+        painter.restore()
+        painter.save()
         small = QFont(styled.font)
         small.setPointSizeF(max(8, small.pointSizeF() - 1))
         painter.setFont(small)
         painter.setPen(QColor(MUTED))
         painter.drawText(
-            QRect(content.left(), content.top() + 26, content.width(), content.height() - 26),
+            QRect(content.left(), content.top() + 46, content.width(), content.height() - 46),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             QFontMetrics(small).elidedText(metadata, Qt.TextElideMode.ElideRight, content.width()),
         )
@@ -92,6 +116,7 @@ class QuestionDialog(QDialog):
     def __init__(self, question=None, parent=None, on_save=None):
         super().__init__(parent)
         self.on_save = on_save
+        self.draft_key = f"question:{question['id']}" if question else "question:new"
         self.setWindowTitle("编辑题目" if question else "新增题目")
         self.resize(600, 560)
         self.setStyleSheet(STYLE)
@@ -109,6 +134,18 @@ class QuestionDialog(QDialog):
         self.explanation = MathEditor()
         self.explanation.setMinimumHeight(85)
         self.is_wrong = QCheckBox("标记为错题")
+        self.options_editor = OptionsEditor()
+        self.metadata_inputs = {}
+        metadata_form = QFormLayout()
+        for field, caption in (("tags", "标签"), ("knowledge_points", "知识点"), ("source", "来源")):
+            editor = QLineEdit()
+            editor.setPlaceholderText("多个项目可用逗号分隔" if field != "source" else "例如课本、试卷名称、页码")
+            self.metadata_inputs[field] = editor
+            metadata_form.addRow(caption, editor)
+        self.difficulty = QComboBox()
+        for value in ("", "简单", "中等", "困难"):
+            self.difficulty.addItem(value or "未设置", value)
+        metadata_form.addRow("难度", self.difficulty)
         self.validation_status = QLabel()
         self.validation_status.setStyleSheet("color:#b84d58;font-size:12px;")
 
@@ -135,7 +172,15 @@ class QuestionDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 22, 24, 20)
         layout.setSpacing(18)
-        layout.addLayout(form)
+        tabs = QTabWidget()
+        content_page = QWidget()
+        content_page.setLayout(form)
+        metadata_page = QWidget()
+        metadata_page.setLayout(metadata_form)
+        tabs.addTab(content_page, "题目内容")
+        tabs.addTab(metadata_page, "分类与来源")
+        tabs.addTab(self.options_editor, "选择题选项")
+        layout.addWidget(tabs)
         layout.addWidget(self.validation_status)
         layout.addWidget(buttons)
 
@@ -146,12 +191,64 @@ class QuestionDialog(QDialog):
             self.answer.setPlainText(question["answer"])
             self.explanation.setPlainText(question["explanation"])
             self.is_wrong.setChecked(bool(question["is_wrong"]))
+            self.options_editor.set_options(dict(question).get("options", {}))
+            for field, editor in self.metadata_inputs.items():
+                editor.setText(question[field])
+            self.difficulty.setCurrentIndex(max(0, self.difficulty.findData(question["difficulty"])))
+        state = store.load_workspace(self.draft_key) if on_save else None
+        try:
+            state = validate_question(state, draft=True) if state else None
+        except ValueError:
+            state = None
+        if state:
+            self.stem.setPlainText(state["stem"])
+            self.subject.setText(state["subject"])
+            self.question_type.setText(state["question_type"])
+            self.answer.setPlainText(state["answer"])
+            self.explanation.setPlainText(state["explanation"])
+            self.is_wrong.setChecked(bool(state["is_wrong"]))
+            self.options_editor.set_options(state["options"])
+            for field, editor in self.metadata_inputs.items():
+                editor.setText(state[field])
+            self.difficulty.setCurrentIndex(max(0, self.difficulty.findData(state["difficulty"])))
+            self.validation_status.setText("已恢复上次未保存的草稿。")
+        self._autosave = QTimer(self)
+        self._autosave.setSingleShot(True)
+        self._autosave.setInterval(600)
+        self._autosave.timeout.connect(self.save_draft)
+        for editor in (self.stem.source, self.subject, self.question_type, self.answer.source,
+                       self.explanation.source, *self.metadata_inputs.values()):
+            editor.textChanged.connect(lambda: self._autosave.start())
+        self.is_wrong.toggled.connect(lambda: self._autosave.start())
+        self.difficulty.currentIndexChanged.connect(lambda: self._autosave.start())
+        self.options_editor.changed.connect(lambda: self._autosave.start())
+
+    def save_draft(self):
+        self._autosave.stop()
+        if not self.on_save:
+            return
+        try:
+            values = validate_question(self.values(), draft=True)
+            store.save_workspace(self.draft_key, values)
+        except (sqlite3.Error, ValueError) as error:
+            self.validation_status.setText(f"草稿自动保存失败：{error}")
+
+    def done(self, result):
+        self._autosave.stop()
+        if result != QDialog.DialogCode.Accepted:
+            self.save_draft()
+        super().done(result)
 
     def _save_if_valid(self):
         if not self.stem.toPlainText().strip():
             self.validation_status.setText("请先输入题干。")
             return
         self.validation_status.clear()
+        try:
+            validate_question(self.values())
+        except ValueError as error:
+            self.validation_status.setText(str(error))
+            return
         if self.on_save:
             try:
                 if not self.on_save(self.values()):
@@ -162,7 +259,7 @@ class QuestionDialog(QDialog):
                 return
         self.accept()
 
-    def values(self) -> dict[str, str | int]:
+    def values(self) -> dict:
         return {
             "stem": self.stem.toPlainText(),
             "subject": self.subject.text(),
@@ -170,6 +267,9 @@ class QuestionDialog(QDialog):
             "answer": self.answer.toPlainText(),
             "explanation": self.explanation.toPlainText(),
             "is_wrong": int(self.is_wrong.isChecked()),
+            **{field: editor.text() for field, editor in self.metadata_inputs.items()},
+            "difficulty": self.difficulty.currentData(),
+            "options": self.options_editor.options(),
         }
 
 
@@ -311,13 +411,16 @@ class MainWindow(QMainWindow):
         self.search = QLineEdit()
         self.search.setMinimumHeight(34)
         self.search.setClearButtonEnabled(True)
-        self.search.setPlaceholderText("搜索题干关键词…")
+        self.search.setPlaceholderText("搜索题干、标签、知识点或来源…")
 
         self.subject_filter = QComboBox()
         self.subject_filter.setMinimumWidth(100)
         self.type_filter = QComboBox()
         self.type_filter.setMinimumWidth(100)
         self.state_filter = QComboBox()
+        self.difficulty_filter = QComboBox()
+        for value in ("", "简单", "中等", "困难"):
+            self.difficulty_filter.addItem(value or "全部难度", value)
         self.state_filter.setMinimumWidth(110)
         for label, value in (
             ("全部状态", "all"),
@@ -343,6 +446,7 @@ class MainWindow(QMainWindow):
         filters.addWidget(self.subject_filter, 1)
         filters.addWidget(self.type_filter, 1)
         filters.addWidget(self.state_filter, 1)
+        filters.addWidget(self.difficulty_filter, 1)
 
         self.table = QTableWidget(0, 2)
         self.table.setHorizontalHeaderLabels(["题目", "状态"])
@@ -355,7 +459,7 @@ class MainWindow(QMainWindow):
         self.table.setShowGrid(False)
         self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(68)
+        self.table.verticalHeader().setDefaultSectionSize(86)
         header = self.table.horizontalHeader()
         header.setFixedHeight(36)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -367,6 +471,7 @@ class MainWindow(QMainWindow):
         self.subject_filter.currentIndexChanged.connect(self.refresh)
         self.type_filter.currentIndexChanged.connect(self.refresh)
         self.state_filter.currentIndexChanged.connect(self.refresh)
+        self.difficulty_filter.currentIndexChanged.connect(self.refresh)
 
         self.empty_label = QLabel()
         self.empty_label.setObjectName("muted")
@@ -399,6 +504,9 @@ class MainWindow(QMainWindow):
         list_header.addWidget(list_title)
         list_header.addStretch()
         list_header.addWidget(self.result_count)
+        self.files_button = AnimatedButton("导入 / 导出")
+        self.files_button.clicked.connect(self.show_question_files)
+        list_header.addWidget(self.files_button)
 
         library_panel = QFrame()
         library_panel.setObjectName("libraryPanel")
@@ -438,6 +546,8 @@ class MainWindow(QMainWindow):
             lambda _index: self._motion.play(self.preview_tabs.currentWidget())
         )
         self._preview_id = None
+        self.read_button = AnimatedButton("展开阅读")
+        self.read_button.clicked.connect(self.read_question)
         detail_actions = QHBoxLayout()
         detail_actions.addWidget(self.edit_button)
         detail_actions.addWidget(self.attach_button)
@@ -445,6 +555,7 @@ class MainWindow(QMainWindow):
         detail_actions.addWidget(self.delete_button)
         detail_layout.addWidget(self.preview_title)
         detail_layout.addWidget(self.preview_meta)
+        detail_layout.addWidget(self.read_button, alignment=Qt.AlignmentFlag.AlignRight)
         detail_layout.addWidget(self.preview_tabs, 1)
         detail_layout.addLayout(detail_actions)
 
@@ -592,6 +703,10 @@ class MainWindow(QMainWindow):
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
+        self.resume_capture_button = AnimatedButton("继续识题草稿")
+        self.resume_capture_button.setObjectName("softButton")
+        self.resume_capture_button.clicked.connect(self.resume_image_recognition)
+        layout.addWidget(self.resume_capture_button, alignment=Qt.AlignmentFlag.AlignLeft)
         self.home_reminder = QLabel()
         self.home_reminder.setObjectName("muted")
         self.home_reminder.setWordWrap(True)
@@ -615,6 +730,7 @@ class MainWindow(QMainWindow):
         try:
             total, wrong, due = store.question_summary()
             (words, new_words, due_words), _ = vocabulary.summary_and_books()
+            pending = len(recognition_drafts.keys())
         except sqlite3.Error:
             for label in self.home_stats.values():
                 label.setText("—")
@@ -622,6 +738,8 @@ class MainWindow(QMainWindow):
             return
         for key, value in (("total", total), ("wrong", wrong), ("due", due), ("words", words)):
             self.home_stats[key].setText(f"{value:,}")
+        self.resume_capture_button.setVisible(pending > 0)
+        self.resume_capture_button.setText(f"继续识题草稿 · {pending} 份待核对")
         self.home_reminder.setText(
             f"复习提醒：{due} 道题目、{due_words} 个单词已到复习时间。单词本中还有 {new_words} 个新词。"
             if total or words else "还没有学习内容，先截图收录一道题，或在单词本导入一份词表。"
@@ -689,6 +807,8 @@ class MainWindow(QMainWindow):
         self.page_stack.setCurrentWidget(page)
         dialog = self._page_dialogs.get(key)
         if dialog is not None:
+            if key == "practice_run":
+                dialog.refresh_review_labels()
             dialog.show()
         active_key = self._page_nav_keys.get(key, key)
         for button, page_key in self._navigation_buttons:
@@ -723,6 +843,9 @@ class MainWindow(QMainWindow):
             self.mini_practice_button.setObjectName("softButton")
             self.mini_practice_button.clicked.connect(self.enter_mini_practice)
             header.addWidget(self.mini_practice_button)
+            restart_button = AnimatedButton("结束本轮")
+            restart_button.clicked.connect(self.end_practice)
+            header.addWidget(restart_button)
         header.addWidget(back_button)
         layout.addLayout(header)
         layout.addWidget(dialog, 1)
@@ -741,7 +864,12 @@ class MainWindow(QMainWindow):
     def _discard_page(self, key):
         container = self._page_containers.pop(key, None)
         self._pages.pop(key, None)
-        self._page_dialogs.pop(key, None)
+        dialog = self._page_dialogs.pop(key, None)
+        if dialog is not None:
+            for timer_name in ("_autosave", "_checkpoint"):
+                timer = getattr(dialog, timer_name, None)
+                if timer is not None:
+                    timer.stop()
         self._page_nav_keys.pop(key, None)
         if container is not None:
             self.page_stack.removeWidget(container)
@@ -752,7 +880,21 @@ class MainWindow(QMainWindow):
         self.refresh()
         self._show_page("library")
 
+    def _save_workspaces(self):
+        editor = self._page_dialogs.get("question")
+        if editor is not None:
+            editor.save_draft()
+        practice = self._page_dialogs.get("practice_run")
+        if practice is not None:
+            practice.save_progress()
+        if "vocabulary" in self._pages:
+            self.vocabulary_page.save_workspaces()
+        for dialog in self._recognition_dialogs:
+            if hasattr(dialog, "save_progress"):
+                dialog.save_progress()
+
     def closeEvent(self, event):
+        self._save_workspaces()
         if "vocabulary" in self._pages:
             self.vocabulary_page.cancel_translation()
             self.vocabulary_page.speech.stop()
@@ -771,6 +913,7 @@ class MainWindow(QMainWindow):
                 self.subject_filter.currentData(),
                 self.type_filter.currentData(),
                 self.state_filter.currentData(),
+                self.difficulty_filter.currentData(),
             )
             summary = store.question_summary()
         except sqlite3.Error as error:
@@ -784,6 +927,7 @@ class MainWindow(QMainWindow):
             or self.subject_filter.currentData()
             or self.type_filter.currentData()
             or self.state_filter.currentData() != "all"
+            or self.difficulty_filter.currentData()
         )
         self.result_count.setText(f"找到 {len(rows)} 道题" if filtered else f"共 {len(rows)} 道题")
         selected_id = self._selected_id()
@@ -831,6 +975,7 @@ class MainWindow(QMainWindow):
             or self.subject_filter.currentData()
             or self.type_filter.currentData()
             or self.state_filter.currentData() != "all"
+            or self.difficulty_filter.currentData()
         )
         if not filtered:
             self.add_question()
@@ -839,6 +984,7 @@ class MainWindow(QMainWindow):
         self.subject_filter.setCurrentIndex(0)
         self.type_filter.setCurrentIndex(0)
         self.state_filter.setCurrentIndex(0)
+        self.difficulty_filter.setCurrentIndex(0)
 
     def _update_actions(self, *_):
         question_id = self._selected_id()
@@ -846,6 +992,7 @@ class MainWindow(QMainWindow):
         self.attach_button.setEnabled(has_selection)
         self.edit_button.setEnabled(has_selection)
         self.delete_button.setEnabled(has_selection)
+        self.read_button.setEnabled(has_selection)
         self._update_preview(question_id)
 
     def _update_preview(self, question_id):
@@ -873,7 +1020,12 @@ class MainWindow(QMainWindow):
             question["question_type"] or "未设题型",
             "已标记为错题" if question["is_wrong"] else "普通题目",
         )))
-        self.preview_stem.setPlainText(question["stem"])
+        classification = " · ".join(f"{caption}：{question[field]}" for field, caption in
+                                    (("difficulty", "难度"), ("tags", "标签"), ("knowledge_points", "知识点"), ("source", "来源"))
+                                    if question[field])
+        if classification:
+            self.preview_meta.setText(self.preview_meta.text() + "\n" + classification)
+        self.preview_stem.setPlainText(question_text(question))
         answer = question["answer"] or "暂未填写参考答案"
         explanation = question["explanation"] or "暂未填写解析"
         self.preview_solution.setSections((("参考答案", answer), ("解析", explanation)))
@@ -915,9 +1067,10 @@ class MainWindow(QMainWindow):
         self._show_page("question")
 
     def _save_new_question(self, values):
-        store.save_question(values)
+        store.save_question(values, draft_key="question:new")
         self._refresh_filter_options()
         self.refresh()
+        self.statusBar().showMessage("题目已保存到本机。", 5000)
         return True
 
     def edit_question(self):
@@ -942,9 +1095,10 @@ class MainWindow(QMainWindow):
         self._show_page("question")
 
     def _save_existing_question(self, question_id, values):
-        store.save_question(values, question_id)
+        store.save_question(values, question_id, draft_key=f"question:{question_id}")
         self._refresh_filter_options()
         self.refresh()
+        self.statusBar().showMessage("题目修改已保存。", 5000)
         return True
 
     def delete_question(self):
@@ -960,6 +1114,7 @@ class MainWindow(QMainWindow):
                 return
             self._refresh_filter_options()
             self.refresh()
+            self.statusBar().showMessage("题目已删除。", 5000)
             if orphaned:
                 QMessageBox.warning(
                     self,
@@ -973,6 +1128,41 @@ class MainWindow(QMainWindow):
             return
         self._show_attachments(question_id, "library")
 
+    def read_question(self):
+        try:
+            question = store.get_question(self._selected_id())
+        except sqlite3.Error as error:
+            self.statusBar().showMessage(f"无法读取题目：{error}", 10000)
+            return
+        if question is None:
+            self.refresh()
+            return
+        dialog = QDialog(self)
+        layout = QVBoxLayout(dialog)
+        browser = MathBrowser()
+        browser.setSections([(f"题目 #{question['id']}", question_text(question)),
+                             ("答案", question["answer"] or "暂无标准答案"),
+                             ("解析", question["explanation"] or "暂无解析")])
+        layout.addWidget(browser)
+        self._embed_dialog_page("reader", dialog, "阅读题目")
+        dialog.rejected.connect(lambda: self._leave_dialog_page("reader"))
+        self._show_page("reader")
+
+    def show_question_files(self):
+        if "question_files" in self._pages:
+            self._show_page("question_files")
+            return
+        filters = dict(search=self.search.text().strip(), subject=self.subject_filter.currentData(),
+                       question_type=self.type_filter.currentData(), state=self.state_filter.currentData(),
+                       difficulty=self.difficulty_filter.currentData())
+        def refresh_import():
+            self._refresh_filter_options()
+            self.refresh()
+        dialog = QuestionFilesDialog(filters, refresh_import, self)
+        self._embed_dialog_page("question_files", dialog, "题库导入与导出")
+        dialog.rejected.connect(lambda: self._leave_dialog_page("question_files"))
+        self._show_page("question_files")
+
     def _show_attachments(self, question_id, back_key):
         dialog = AttachmentsDialog(question_id, self)
         self._embed_dialog_page(
@@ -983,7 +1173,12 @@ class MainWindow(QMainWindow):
         dialog.rejected.connect(lambda: self._leave_dialog_page("attachments", back_key))
         self._show_page("attachments")
 
-    def start_image_recognition(self, image_path=None, auto_recognize=False):
+    def resume_image_recognition(self):
+        keys = recognition_drafts.keys()
+        if keys:
+            self.start_image_recognition(resume_key=keys[0])
+
+    def start_image_recognition(self, image_path=None, auto_recognize=False, resume_key=None):
         self.restore_mini_practice()
         if self.isMinimized():
             self.showNormal()
@@ -992,10 +1187,12 @@ class MainWindow(QMainWindow):
         if image_path is None:
             for current in reversed(self._recognition_dialogs):
                 if current.isVisible():
+                    if resume_key and current.session_key != resume_key:
+                        continue
                     current.raise_()
                     current.activateWindow()
                     return current
-        dialog = ImageRecognitionDialog(image_path, self, auto_recognize=auto_recognize)
+        dialog = ImageRecognitionDialog(image_path, self, auto_recognize=auto_recognize, resume_key=resume_key)
         self._recognition_dialogs.append(dialog)
         dialog.accepted.connect(self._refresh_filter_options)
         dialog.accepted.connect(self.refresh)
@@ -1012,6 +1209,7 @@ class MainWindow(QMainWindow):
             directory.cleanup()
         dialog._clipboard_temp_dirs.clear()
         dialog.deleteLater()
+        self._refresh_home()
 
     def dragEnterEvent(self, event):
         if any(url.isLocalFile() for url in event.mimeData().urls()):
@@ -1031,6 +1229,15 @@ class MainWindow(QMainWindow):
         if "practice_run" in self._pages:
             self._show_page("practice_run")
             return
+        try:
+            progress = load_practice_progress()
+        except sqlite3.Error as error:
+            self.statusBar().showMessage(f"无法恢复练习进度：{error}", 10000)
+            return
+        if progress:
+            self._open_practice(*progress)
+            self.statusBar().showMessage("已恢复上次练习和未记录的作答。", 5000)
+            return
         setup = self._practice_setup
         first_open = setup is None
         if setup is None:
@@ -1041,6 +1248,8 @@ class MainWindow(QMainWindow):
             )
             setup.accepted.connect(self._begin_practice)
             setup.rejected.connect(lambda: self._show_page("library"))
+        if store.load_workspace("practice"):
+            setup.status.setText("上次练习引用的题目已删除或进度无效，请重新选择题目；已有作答记录保留。")
         setup.refresh_subjects()
         if first_open:
             setup.subject.setCurrentIndex(max(0, setup.subject.findData(self.subject_filter.currentData())))
@@ -1051,6 +1260,8 @@ class MainWindow(QMainWindow):
             filters.append(f"题型：{self.type_filter.currentText()}")
         if self.state_filter.currentData() != "all":
             filters.append(f"状态：{self.state_filter.currentText()}")
+        if self.difficulty_filter.currentData():
+            filters.append(f"难度：{self.difficulty_filter.currentText()}")
         setup.filter_hint.setText(
             "勾选后额外限制为：" + "；".join(filters)
             if filters else "题库当前没有额外的搜索、题型或状态限制。"
@@ -1059,6 +1270,9 @@ class MainWindow(QMainWindow):
         self._show_page("practice_setup")
 
     def _begin_practice(self):
+        if "practice_run" in self._pages:
+            self._show_page("practice_run")
+            return
         setup = self._practice_setup
         mode, subject, random_order, use_library_filters = setup.values()
         try:
@@ -1068,6 +1282,7 @@ class MainWindow(QMainWindow):
                 subject=subject,
                 question_type=self.type_filter.currentData() if use_library_filters else "",
                 state=self.state_filter.currentData() if use_library_filters else "all",
+                difficulty=self.difficulty_filter.currentData() if use_library_filters else "",
             )
         except sqlite3.Error as error:
             setup.status.setText(f"无法生成练习题：{error}")
@@ -1080,7 +1295,12 @@ class MainWindow(QMainWindow):
         setup.status.clear()
         if random_order:
             random.shuffle(questions)
-        dialog = PracticeDialog(questions, self)
+        self._open_practice(questions[:setup.limit.value()])
+        if setup.mini_mode.isChecked():
+            self.enter_mini_practice()
+
+    def _open_practice(self, questions, resume=None):
+        dialog = PracticeDialog(questions, self, resume=resume)
         self._embed_dialog_page(
             "practice_run", dialog, "练习中", nav_key="practice"
         )
@@ -1092,8 +1312,21 @@ class MainWindow(QMainWindow):
         dialog.rejected.connect(lambda: self._leave_dialog_page("practice_run"))
         self._show_page("practice_run")
         self.refresh()
-        if setup.mini_mode.isChecked():
-            self.enter_mini_practice()
+
+    def end_practice(self):
+        if QMessageBox.question(self, "结束本轮练习", "保留已记录的作答，放弃本轮未记录的答案并重新选择题目？") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            store.save_workspace("practice", None)
+        except sqlite3.Error as error:
+            self.statusBar().showMessage(f"无法结束练习：{error}", 10000)
+            return
+        self.restore_mini_practice()
+        dialog = self._page_dialogs.get("practice_run")
+        if dialog is not None:
+            dialog._checkpoint.stop()
+        self._discard_page("practice_run")
+        self.start_practice()
 
     def enter_mini_practice(self):
         if self._mini_practice_window is not None:
@@ -1181,6 +1414,7 @@ class MainWindow(QMainWindow):
         ) != QMessageBox.StandardButton.Yes:
             return
         try:
+            self._save_workspaces()
             backup.create_backup(destination)
         except (OSError, sqlite3.Error, ValueError) as error:
             QMessageBox.critical(self, "备份失败", str(error))
@@ -1203,11 +1437,23 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.StandardButton.Yes:
             return
         try:
+            self._save_workspaces()
             recovery = backup.restore_backup(path)
         except (OSError, sqlite3.Error, ValueError, zipfile.BadZipFile) as error:
             QMessageBox.critical(self, "恢复失败", str(error))
             return
+        # Discard widgets tied to the old database, including pending autosave timers.
+        for dialog in list(self._recognition_dialogs):
+            dialog.abandon_for_restore()
+        self.restore_mini_practice(show_main=False)
+        for key in ("question", "practice_run", "attachments", "reader"):
+            if key in self._pages:
+                self._discard_page(key)
+        if self._profiles_dialog is not None:
+            self._profiles_dialog._reload()
+        self._refresh_filter_options()
         self.refresh()
         if "vocabulary" in self._pages:
             self.vocabulary_page.reset()
+        self._show_page("library")
         QMessageBox.information(self, "恢复完成", f"当前数据已恢复。恢复前备份保存在：\n{recovery}")

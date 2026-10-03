@@ -46,6 +46,33 @@ def import_image(question_id: int, source: str | Path) -> int:
         raise
 
 
+def import_recognized_questions(questions, source, workspace_key=None):
+    from app.question_data import validate_question
+
+    questions = [validate_question(question) for question in questions]
+    source = validate_image(source)
+    if not 1 <= len(questions) <= 100:
+        raise ValueError("每次可收录 1～100 道识题草稿。")
+    ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    destinations, images = [], []
+    try:
+        for _ in questions:
+            destination = ATTACHMENTS_DIR / f"{uuid4().hex}{source.suffix.lower()}"
+            destinations.append(destination)
+            # ponytail: preserve a separate original per question; share blobs when duplication becomes material.
+            shutil.copyfile(source, destination)
+            images.append(dict(relative_path=f"attachments/{destination.name}", original_name=source.name,
+                               mime_type=mimetypes.guess_type(source.name)[0] or "image/png"))
+        return store.save_recognized_questions(questions, images, workspace_key)
+    except Exception:
+        for destination in destinations:
+            try:
+                destination.unlink(missing_ok=True)
+            except OSError:
+                pass  # An unreferenced copy may remain; never commit a partial question batch.
+        raise
+
+
 def attachment_file(relative_path: str) -> Path:
     root = ATTACHMENTS_DIR.resolve()
     path = (store.DATA_DIR / relative_path).resolve()

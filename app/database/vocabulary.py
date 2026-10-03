@@ -20,6 +20,9 @@ def validate_word(value):
 
 
 def _values(data, require_meaning=True):
+    if not isinstance(data, dict) or any(not isinstance(data.get(key, ""), str)
+                                         for key in ("word", "meaning", "phonetic", "example", "book")):
+        raise ValueError("词条内容应为文本。")
     word = validate_word(data.get("word", ""))
     meaning = data.get("meaning", "").strip()
     if (require_meaning and not meaning) or len(meaning) > 4000:
@@ -33,7 +36,7 @@ def _values(data, require_meaning=True):
     return (word, meaning, *extras)
 
 
-def save_word(data, word_id=None):
+def save_word(data, word_id=None, draft_key=None):
     values = _values(data)
     try:
         with store._connection() as connection:
@@ -41,6 +44,8 @@ def save_word(data, word_id=None):
                 cursor = connection.execute(
                     "INSERT INTO vocabulary_words (word, meaning, phonetic, example, book) VALUES (?, ?, ?, ?, ?)", values
                 )
+                if draft_key:
+                    store._write_workspace(connection, draft_key, None)
                 return int(cursor.lastrowid)
             cursor = connection.execute(
                 "UPDATE vocabulary_words SET word = ?, meaning = ?, phonetic = ?, example = ?, book = ? WHERE id = ?",
@@ -48,6 +53,8 @@ def save_word(data, word_id=None):
             )
             if not cursor.rowcount:
                 raise ValueError("单词已不存在，请刷新列表。")
+            if draft_key:
+                store._write_workspace(connection, draft_key, None)
             return word_id
     except sqlite3.IntegrityError as error:
         raise ValueError("该单词已存在，请编辑现有词条。") from error
@@ -61,6 +68,7 @@ def get_word(word_id):
 def delete_word(word_id):
     with store._connection() as connection:
         connection.execute("DELETE FROM vocabulary_words WHERE id = ?", (word_id,))
+        store._write_workspace(connection, f"vocabulary:word:{word_id}", None)
 
 
 def list_words(search="", book="", scope="all", limit=None):
@@ -94,7 +102,7 @@ def summary_and_books():
         return tuple(summary), [row[0] for row in books]
 
 
-def record_review(word_id, rating):
+def record_review(word_id, rating, session_state=None):
     if rating not in {"forgot", "hard", "known"}:
         raise ValueError("无效的单词掌握程度。")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -111,6 +119,9 @@ def record_review(word_id, rating):
             (streak, now.strftime("%Y-%m-%d %H:%M:%S"),
              (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"), word_id),
         )
+        if session_state is not None:
+            store._write_workspace(connection, "vocabulary:study",
+                                   session_state if session_state["index"] < len(session_state["ids"]) else None)
 
 
 def read_word_file(path):
@@ -161,10 +172,14 @@ def read_word_file(path):
     return [dict(zip(("word", "meaning", "phonetic", "example", "book"), value)) for value in values]
 
 
-def import_rows(rows):
-    values = [_values(row) for row in rows]
-    if not values or len(values) > 5000:
+def validate_rows(rows, require_meaning=True):
+    if not isinstance(rows, list) or not 1 <= len(rows) <= 5000:
         raise ValueError("每次导入 1～5000 个单词。")
+    return [dict(zip(("word", "meaning", "phonetic", "example", "book"), _values(row, require_meaning))) for row in rows]
+
+
+def import_rows(rows, draft_key=None):
+    values = [_values(row) for row in validate_rows(rows)]
     added = 0
     with store._connection() as connection:
         for value in values:
@@ -173,6 +188,8 @@ def import_rows(rows):
                    VALUES (?, ?, ?, ?, ?) ON CONFLICT(word) DO NOTHING""", value,
             )
             added += cursor.rowcount
+        if draft_key:
+            store._write_workspace(connection, draft_key, None)
     return added, len(values) - added
 
 

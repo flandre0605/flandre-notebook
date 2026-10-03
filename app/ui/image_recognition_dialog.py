@@ -1,15 +1,17 @@
 import tempfile
+import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QThreadPool, QTimer, Qt, Signal
+from PySide6.QtCore import QThreadPool, QTimer, Qt, Signal, QSignalBlocker
 from PySide6.QtGui import QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QStackedWidget, QVBoxLayout, QWidget, QPlainTextEdit,
+    QStackedWidget, QVBoxLayout, QWidget, QPlainTextEdit, QMessageBox,
 )
 
 from app.database import store
 from app.services import attachments
+from app.services import recognition_drafts
 from app.services.model_provider import recognize_image
 from app.ui.recognition_draft_dialog import RecognitionDraftDialog
 from app.ui.worker import Worker
@@ -105,7 +107,7 @@ class ImageDropZone(QFrame):
 
 
 class ImageRecognitionDialog(QDialog):
-    def __init__(self, image_path: str | Path | None = None, parent=None, auto_recognize=False):
+    def __init__(self, image_path: str | Path | None = None, parent=None, auto_recognize=False, resume_key=None):
         super().__init__(parent)
         self.setWindowTitle("AI 图片识题")
         self.resize(760, 650)
@@ -114,6 +116,13 @@ class ImageRecognitionDialog(QDialog):
         self._clipboard_temp_dirs = []
         self._recognizing = False
         self._dismissed = False
+        self.session_key = None
+        self._draft_state = None
+        self.draft_editor = None
+        self._autosave = QTimer(self)
+        self._autosave.setSingleShot(True)
+        self._autosave.setInterval(600)
+        self._autosave.timeout.connect(self.save_progress)
         self.drop_zone = ImageDropZone()
         self.drop_zone.image_dropped.connect(self.set_image)
         self.views = QStackedWidget()
@@ -143,6 +152,9 @@ class ImageRecognitionDialog(QDialog):
         self.details_button = AnimatedButton("查看原始响应")
         self.details_button.hide()
         self.details_button.clicked.connect(self._toggle_details)
+        self.continue_draft = AnimatedButton("继续核对已保存草稿")
+        self.continue_draft.clicked.connect(self._continue_draft)
+        self.continue_draft.hide()
         heading = QLabel("整理纸上的错题")
         heading.setObjectName("pageTitle")
         heading.setStyleSheet("font-size:22px;font-weight:700;")
@@ -162,6 +174,7 @@ class ImageRecognitionDialog(QDialog):
         input_layout.addWidget(self.status)
         input_layout.addWidget(self.details_button)
         input_layout.addWidget(self.response_details)
+        input_layout.addWidget(self.continue_draft)
         input_layout.addLayout(actions)
         self.views.addWidget(self.input_page)
         self._motion = ContentFade(self)
@@ -169,12 +182,35 @@ class ImageRecognitionDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.views)
+        recovery_row = QHBoxLayout()
+        self.sessions = QComboBox()
+        self.sessions.setMinimumContentsLength(15)
+        self.sessions.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.sessions.currentIndexChanged.connect(self._select_session)
+        self.discard_button = AnimatedButton("舍弃这份草稿")
+        self.discard_button.setObjectName("dangerButton")
+        self.discard_button.clicked.connect(self.discard_draft)
+        self.draft_status = QLabel("开始识题后，图片与草稿保存在本机，关闭后可继续核对。")
+        self.draft_status.setObjectName("muted")
+        self.draft_status.setWordWrap(True)
+        self.draft_status.setTextFormat(Qt.TextFormat.PlainText)
+        recovery_row.addWidget(self.sessions, 1)
+        recovery_row.addWidget(self.discard_button)
+        footer = QWidget()
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(24, 6, 24, 16)
+        footer_layout.addWidget(self.draft_status)
+        footer_layout.addLayout(recovery_row)
+        layout.addWidget(footer)
+        self._refresh_sessions()
         self.recognize_button.setEnabled(bool(self.profiles))
         self.profile.setEnabled(bool(self.profiles))
         if not self.profiles:
             self.status.setText("没有已启用的视觉模型，请先到「设置 → 模型服务」添加配置。")
         if image_path:
             self.set_image(str(image_path))
+        if resume_key:
+            self._load_session(resume_key)
         if auto_recognize:
             QTimer.singleShot(0, self.recognize)
 
@@ -214,6 +250,11 @@ class ImageRecognitionDialog(QDialog):
     def set_image(self, path: str):
         if self._recognizing or self.views.currentWidget() is not self.input_page:
             return
+        self.save_progress()
+        self.session_key = self._draft_state = None
+        self.continue_draft.hide()
+        self.discard_button.setEnabled(False)
+        self._refresh_sessions()
         self.image_path = None
         self.recognize_button.setEnabled(False)
         self.drop_zone.clear_image()
@@ -237,6 +278,15 @@ class ImageRecognitionDialog(QDialog):
         if profile is None:
             self.status.setText("没有可用的视觉模型，请先到设置中启用一个视觉模型。")
             return
+        try:
+            if self.session_key is None:
+                self.session_key, self._draft_state, self.image_path = recognition_drafts.create(self.image_path, profile_id)
+            self._draft_state["profile_id"] = profile_id
+            self.save_progress()
+            self._refresh_sessions()
+        except (OSError, ValueError, sqlite3.Error) as error:
+            self.status.setText(f"原图保存失败，尚未发送识题请求：{error}")
+            return
         self._recognizing = True
         self.details_button.hide()
         self.response_details.hide()
@@ -254,6 +304,13 @@ class ImageRecognitionDialog(QDialog):
         if self._dismissed:
             self.done(self._pending_result)
             return
+        try:
+            if self.session_key is None:
+                self.session_key, self._draft_state, self.image_path = recognition_drafts.create(self.image_path, self.profile.currentData())
+            self._draft_state.update(drafts=draft, current_index=0)
+            recognition_drafts.save(self.session_key, self._draft_state)
+        except (OSError, ValueError, sqlite3.Error) as error:
+            self.draft_status.setText(f"识题草稿保存失败：{error}。请保留窗口并及时收录。")
         self._set_input_enabled(True)
         self.status.setText("识别完成 · 请核对草稿")
         editor = RecognitionDraftDialog(None, self.image_path, draft, self)
@@ -261,8 +318,10 @@ class ImageRecognitionDialog(QDialog):
         editor.save_requested.connect(lambda current=editor: self._save_draft(current))
         editor.rejected.connect(lambda current=editor: self._return_to_input(current))
         self.draft_editor = editor
+        editor.content_changed.connect(lambda: self._autosave.start())
         self.views.addWidget(editor)
         self.views.setCurrentWidget(editor)
+        self._refresh_sessions()
         available = self.screen().availableGeometry()
         self.resize(min(max(980, self.width()), available.width() - 32),
                     min(max(700, self.height()), available.height() - 64))
@@ -271,30 +330,29 @@ class ImageRecognitionDialog(QDialog):
         self.move(frame.topLeft())
 
     def _return_to_input(self, editor):
+        self.save_progress()
         self.views.setCurrentWidget(self.input_page)
         self.views.removeWidget(editor)
         editor.deleteLater()
         self.draft_editor = None
+        self.continue_draft.setVisible(bool(self._draft_state and self._draft_state.get("drafts")))
 
     def _save_draft(self, editor):
-        question_ids = []
+        if self._dismissed or self.draft_editor is not editor:
+            return
         try:
-            for values in editor.values():
-                question_id = store.save_question(values)
-                question_ids.append(question_id)
-                # ponytail: copy the source image per question; share attachment storage if duplication becomes material.
-                attachments.import_image(question_id, self.image_path)
+            question_ids = attachments.import_recognized_questions(editor.values(), self.image_path, self.session_key)
         except Exception as error:
-            cleanup_errors = []
-            for question_id in question_ids:
-                try:
-                    cleanup_errors.extend(attachments.delete_question_images(question_id))
-                except Exception as cleanup_error:
-                    cleanup_errors.append(str(cleanup_error))
-            detail = f"\n清理失败：{'；'.join(cleanup_errors)}" if cleanup_errors else ""
-            self.status.setText(f"收录失败：{error}{detail}")
+            editor.validation_status.setText(f"收录失败：{error}。本次未写入题目，草稿保留。")
             self.status.setToolTip(str(error))
             return
+        self._autosave.stop()
+        if self.session_key:
+            try:
+                recognition_drafts.discard(self.session_key, self._draft_state)
+            except (OSError, ValueError, sqlite3.Error):
+                pass  # Formal rows are already committed; a leftover draft image must not trigger another import.
+        self.session_key = self._draft_state = None
         self.status.setText(f"已收录 {len(question_ids)} 道题，原图已保存为题目附件。")
         editor.accept()
         self.accept()
@@ -324,8 +382,88 @@ class ImageRecognitionDialog(QDialog):
         self.paste_button.setEnabled(enabled)
         self.profile.setEnabled(enabled and bool(self.profiles))
         self.drop_zone.setAcceptDrops(enabled)
+        self.sessions.setEnabled(enabled)
+        self.discard_button.setEnabled(enabled and self.session_key is not None)
+
+    def save_progress(self):
+        self._autosave.stop()
+        if not self.session_key or not self._draft_state:
+            return
+        if self.draft_editor is not None:
+            self._draft_state.update(drafts=self.draft_editor.values(), current_index=self.draft_editor.current_index)
+        self._draft_state["profile_id"] = self.profile.currentData() or ""
+        try:
+            recognition_drafts.save(self.session_key, self._draft_state)
+            self.draft_status.setText("识题草稿已自动保存，关闭后可从首页继续。")
+        except (OSError, ValueError, sqlite3.Error) as error:
+            self.draft_status.setText(f"识题草稿保存失败：{error}。请保留窗口并及时收录。")
+
+    def _refresh_sessions(self):
+        with QSignalBlocker(self.sessions):
+            self.sessions.clear()
+            self.sessions.addItem("选择已保存的识题草稿…", None)
+            for key in recognition_drafts.keys():
+                state = store.load_workspace(key) or {}
+                self.sessions.addItem(f"{str(state.get('source_name', '图片'))[:80]} · {len(state.get('drafts', [])) if isinstance(state.get('drafts'), list) else 0} 道", key)
+            self.sessions.setCurrentIndex(max(0, self.sessions.findData(self.session_key)))
+        self.discard_button.setEnabled(self.session_key is not None and not self._recognizing)
+
+    def _select_session(self, *_):
+        key = self.sessions.currentData()
+        if key and key != self.session_key and not self._recognizing:
+            self._load_session(key)
+
+    def _load_session(self, key):
+        try:
+            state, path = recognition_drafts.load(key)
+            self.save_progress()
+        except (OSError, ValueError, sqlite3.Error) as error:
+            self.draft_status.setText(f"草稿无法恢复：{error}。请保留备份或重新选择图片。")
+            return
+        if self.draft_editor is not None:
+            self._return_to_input(self.draft_editor)
+        self.session_key, self._draft_state, self.image_path = key, state, path
+        self.drop_zone.set_image(path)
+        self.profile.setCurrentIndex(max(0, self.profile.findData(state["profile_id"])))
+        self.status.setText("已恢复上次图片；点击开始识题才会发送请求。")
+        self.recognize_button.setEnabled(bool(self.profiles))
+        if state["drafts"]:
+            index = state["current_index"]
+            self._recognized(state["drafts"])
+            self.draft_editor.question_selector.setCurrentIndex(index)
+        self._refresh_sessions()
+
+    def _continue_draft(self):
+        if self.session_key and self._draft_state and self._draft_state["drafts"]:
+            self._load_session(self.session_key)
+
+    def discard_draft(self):
+        if not self.session_key or self._recognizing:
+            return
+        if QMessageBox.question(self, "舍弃识题草稿", "舍弃这份未收录的草稿和图片副本？已保存的题目不受影响。") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            cleaned = recognition_drafts.discard(self.session_key, self._draft_state)
+        except (OSError, ValueError, sqlite3.Error) as error:
+            self.draft_status.setText(f"舍弃失败：{error}")
+            return
+        self._autosave.stop()
+        self.session_key = self._draft_state = None
+        if self.draft_editor is not None:
+            self._return_to_input(self.draft_editor)
+        self.image_path = None
+        self.drop_zone.clear_image()
+        self.continue_draft.hide()
+        self.draft_status.setText("草稿已舍弃。" if cleaned else "草稿已舍弃，图片副本未能清理，可稍后清理。")
+        self._refresh_sessions()
+
+    def abandon_for_restore(self):
+        self._autosave.stop()
+        self.session_key = self._draft_state = None
+        self.reject()
 
     def done(self, result):
+        self.save_progress()
         self._motion.finish()
         self._dismissed = True
         if self._recognizing:

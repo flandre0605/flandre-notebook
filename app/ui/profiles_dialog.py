@@ -4,7 +4,7 @@ from PySide6.QtCore import QSettings, Qt, QThreadPool, QUrl
 from PySide6.QtGui import QKeySequence, QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QKeySequenceEdit, QLineEdit, QListWidget, QMessageBox, QSpinBox, QVBoxLayout, QApplication,
+    QKeySequenceEdit, QLineEdit, QListWidget, QMessageBox, QSpinBox, QVBoxLayout, QApplication, QTabWidget, QWidget,
 )
 
 from app.database import store
@@ -15,6 +15,7 @@ from app.ui.screenshot import GlobalScreenshotHotkey
 from app.ui.motion import AnimatedButton
 from app.ui.theme import ACCENT, MUTED
 from app.ui.worker import Worker
+from app.ui.review_settings import ReviewSettings
 
 
 class ProfilesDialog(QDialog):
@@ -121,11 +122,19 @@ class ProfilesDialog(QDialog):
         left.addWidget(self.web_start_button)
         left.addWidget(self.web_manage_button)
         left.addWidget(self.web_password_button)
-        layout = QHBoxLayout(self)
+        models_page = QWidget()
+        layout = QHBoxLayout(models_page)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(24)
         layout.addLayout(left, 1)
         layout.addLayout(right, 2)
+        self.settings_tabs = QTabWidget()
+        self.settings_tabs.addTab(models_page, "模型与截图")
+        self.review_settings = ReviewSettings()
+        self.settings_tabs.addTab(self.review_settings, "复习设置")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.settings_tabs)
         self._reload()
         for field in (self.name, self.base_url, self.endpoint_path, self.api_key):
             field.textChanged.connect(self._mark_edited)
@@ -196,6 +205,7 @@ class ProfilesDialog(QDialog):
             self.shortcut_status.setStyleSheet("color:#a66a16;font-size:12px;")
 
     def _reload(self, selected_id=None):
+        self.review_settings.reload()
         self.rows = store.list_profiles()
         self.empty_hint.setVisible(not self.rows)
         self.profiles.clear()

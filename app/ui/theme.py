@@ -96,10 +96,17 @@ QListWidget::item { padding: 10px; margin-bottom: 4px; border-radius: 8px; }
 QListWidget::item:hover { background: #fff4f8; }
 QListWidget::item:selected { background: #fbe1ec; color: #913455; }
 QCheckBox { color: #705361; spacing: 9px; }
+QRadioButton { color: #705361; spacing: 9px; }
+QRadioButton::indicator { width: 17px; height: 17px; border: 1px solid #cfa4b6; border-radius: 9px; background: white; }
+QRadioButton::indicator:checked { border: 5px solid #b54b72; background: white; }
+QRadioButton::indicator:hover { border-color: #b54b72; }
 QCheckBox::indicator { width: 17px; height: 17px; border: 1px solid #cfa4b6; border-radius: 5px; background: white; }
 QCheckBox::indicator:hover { border-color: #b54b72; background: #fff4f8; }
 QCheckBox::indicator:checked { background: #b54b72; border-color: #b54b72; image: url("@assets/check.svg"); }
 QCheckBox::indicator:disabled { background: #f0e3e9; border-color: #dfcbd5; }
+QCheckBox::indicator:disabled:checked { background: #b54b72; border-color: #b54b72; }
+QScrollArea#choiceScroll { background: #fffafd; border: 1px solid #efd2df; border-radius: 12px; }
+QWidget#choiceBody { background: #fffafd; }
 QScrollBar:vertical { background: #fff8fb; width: 10px; margin: 0; }
 QScrollBar::handle:vertical { background: #e0bdcd; border-radius: 4px; min-height: 28px; }
 QScrollBar::handle:vertical:hover { background: #c77a96; }

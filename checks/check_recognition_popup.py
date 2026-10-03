@@ -67,7 +67,10 @@ def check():
                 assert not window.isMinimized()
                 assert window.page_stack.currentWidget() is original_page
                 assert window.start_image_recognition() is popup
-                wait_until(lambda: hasattr(popup, "draft_editor"))
+                wait_until(lambda: popup.draft_editor is not None)
+                original_screenshot = screenshot
+                screenshot = popup.image_path
+                assert screenshot.exists()
                 assert request.call_count == 1 and len(store.list_questions()) == 0
                 editor = popup.draft_editor
                 popup.set_image(str(external))
@@ -76,7 +79,7 @@ def check():
                 editor.question_selector.setCurrentIndex(1)
                 assert editor.values()[0]["stem"] == "核对后的第一题"
                 editor._accept_if_valid()
-                assert len(store.list_questions()) == 2 and not screenshot.exists()
+                assert len(store.list_questions()) == 2 and not screenshot.exists() and not original_screenshot.exists()
                 assert window.page_stack.currentWidget() is original_page
                 assert not window._recognition_dialogs and external.exists()
                 for question in store.list_questions():
@@ -95,6 +98,8 @@ def check():
                 popup = window._recognition_dialogs[-1]
                 screenshot = popup.image_path
                 wait_until(started.is_set)
+                original_screenshot = screenshot
+                screenshot = popup.image_path
                 assert not popup.paste_button.isEnabled() and not popup.drop_zone.acceptDrops()
                 popup.recognize()
                 popup.set_image(str(external))
@@ -103,13 +108,14 @@ def check():
                 assert not popup.isVisible() and screenshot.exists() and popup._dismissed
                 release.set()
                 wait_until(lambda: popup not in window._recognition_dialogs)
-                assert not screenshot.exists() and len(store.list_questions()) == 2
+                assert screenshot.exists() and not original_screenshot.exists() and len(store.list_questions()) == 2
+                assert store.load_workspace(popup.session_key) is not None
                 assert window.page_stack.currentWidget() is original_page
             with patch("app.ui.image_recognition_dialog.recognize_image", side_effect=ProviderError("HTTP 502", "details")):
                 popup = window.start_image_recognition(external, auto_recognize=True)
                 wait_until(lambda: "HTTP 502" in popup.status.text())
                 assert popup.isVisible() and popup.recognize_button.isEnabled() and popup.paste_button.isEnabled()
-                assert popup.image_path == external and external.exists()
+                assert popup.image_path.exists() and external.exists()
                 assert popup.details_button.isVisible()
                 popup.details_button.click()
                 assert popup.response_details.isVisible() and popup.response_details.toPlainText() == "details"

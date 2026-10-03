@@ -2,7 +2,7 @@ import csv
 from pathlib import Path
 import sqlite3
 
-from PySide6.QtCore import Qt, Signal, QSignalBlocker, QThreadPool
+from PySide6.QtCore import Qt, Signal, QSignalBlocker, QThreadPool, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame, QHBoxLayout, QHeaderView,
@@ -28,6 +28,11 @@ class WordStudy(QWidget):
     def __init__(self):
         super().__init__()
         self.words = []
+        self._restoring = False
+        self._checkpoint = QTimer(self)
+        self._checkpoint.setSingleShot(True)
+        self._checkpoint.setInterval(600)
+        self._checkpoint.timeout.connect(self.save_progress)
         self.progress = QLabel()
         self.progress.setObjectName("badge")
         self.progress.setWordWrap(True)
@@ -68,6 +73,7 @@ class WordStudy(QWidget):
         self.answer.setMaxLength(100)
         self.answer.setPlaceholderText("输入英文单词，按 Enter 检查拼写")
         self.answer.returnPressed.connect(self.reveal)
+        self.answer.textChanged.connect(lambda: self._checkpoint.start() if not self._restoring else None)
         self.reveal_button = AnimatedButton("显示释义")
         self.reveal_button.setObjectName("primaryButton")
         self.reveal_button.clicked.connect(self.reveal)
@@ -115,11 +121,35 @@ class WordStudy(QWidget):
         layout.addLayout(header)
         layout.addWidget(scroll, 1)
 
-    def begin(self, words, mode):
+    def begin(self, words, mode, resume=None):
         self.words = [dict(word) for word in words]
         self.mode = mode
         self.index = self.remembered = 0
+        self._restoring = bool(resume)
+        if resume:
+            self.index, self.remembered = resume["index"], resume["remembered"]
         self.show_card()
+        if resume:
+            self.answer.setText(resume["answer"])
+            if resume["revealed"]:
+                self.reveal()
+        self._restoring = False
+        self.save_progress()
+
+    def session_state(self):
+        word = self.words[self.index]
+        return dict(ids=[row["id"] for row in self.words], index=self.index, mode=self.mode,
+                    remembered=self.remembered, answer=self.answer.text(), revealed=self.revealed,
+                    word_content=[word[key] for key in ("word", "meaning", "phonetic", "example")])
+
+    def save_progress(self):
+        self._checkpoint.stop()
+        if self._restoring or not self.words or self.index >= len(self.words):
+            return
+        try:
+            store.save_workspace("vocabulary:study", self.session_state())
+        except (sqlite3.Error, ValueError) as error:
+            self.status.setText(f"背诵进度保存失败：{error}")
 
     def show_card(self):
         self.stop_requested.emit()
@@ -153,11 +183,13 @@ class WordStudy(QWidget):
             self.reveal_button.show()
             self.pronounce.setVisible(not spelling)
             self.auto_speak.show()
-            if not spelling and self.auto_speak.isChecked():
+            if not spelling and self.auto_speak.isChecked() and not self._restoring:
                 self.speak()
             if spelling:
                 self.answer.setFocus()
         self.content_changed.emit()
+        if not self._restoring:
+            self.save_progress()
 
     def reveal(self):
         if self.revealed or self.index >= len(self.words):
@@ -186,9 +218,11 @@ class WordStudy(QWidget):
         self.known.setVisible(self.correct is not False)
         self.pronounce.show()
         self.phonetic.setVisible(bool(word["phonetic"]))
-        if self.mode == "spelling" and self.auto_speak.isChecked():
+        if self.mode == "spelling" and self.auto_speak.isChecked() and not self._restoring:
             self.speak()
         self.content_changed.emit()
+        if not self._restoring:
+            self.save_progress()
 
     def speak(self):
         if self.index < len(self.words) and (self.mode != "spelling" or self.revealed):
@@ -200,13 +234,44 @@ class WordStudy(QWidget):
         if self.correct is False:
             rating = "forgot"
         try:
-            vocabulary.record_review(self.words[self.index]["id"], rating)
+            next_state = self.session_state()
+            next_state.update(index=self.index + 1, remembered=self.remembered + int(rating == "known"),
+                              answer="", revealed=False)
+            if self.index + 1 < len(self.words):
+                next_state["word_content"] = [self.words[self.index + 1][key] for key in ("word", "meaning", "phonetic", "example")]
+            vocabulary.record_review(self.words[self.index]["id"], rating, session_state=next_state)
         except (sqlite3.Error, ValueError) as error:
             self.status.setText(f"保存失败，未进入下一词：{error}")
             return
         self.remembered += rating == "known"
         self.index += 1
+        self._checkpoint.stop()
         self.show_card()
+
+    def resume(self):
+        state = store.load_workspace("vocabulary:study")
+        if not state:
+            return False
+        try:
+            ids, index = state["ids"], state["index"]
+            if not isinstance(ids, list) or not 1 <= len(ids) <= 200 or any(type(value) is not int or value <= 0 for value in ids) or len(set(ids)) != len(ids):
+                raise ValueError("队列无效")
+            if type(index) is not int or not 0 <= index < len(ids) or state["mode"] not in ("card", "spelling"):
+                raise ValueError("队列位置无效")
+            if type(state["remembered"]) is not int or not 0 <= state["remembered"] <= index or type(state["revealed"]) is not bool:
+                raise ValueError("作答状态无效")
+            if not isinstance(state["answer"], str) or len(state["answer"]) > 100:
+                raise ValueError("拼写内容无效")
+            words = [vocabulary.get_word(word_id) for word_id in ids]
+            if any(word is None for word in words):
+                raise ValueError("本轮包含已删除的单词")
+            if state.get("word_content") != [words[index][key] for key in ("word", "meaning", "phonetic", "example")]:
+                state["revealed"] = False
+            self.begin(words, state["mode"], resume=state)
+            return True
+        except (KeyError, TypeError, ValueError) as error:
+            self.status.setText(f"无法恢复背诵：{error}。可结束本轮后重新选词，已有复习次数保留。")
+            return False
 
 
 class VocabularyPage(QDialog):
@@ -218,6 +283,12 @@ class VocabularyPage(QDialog):
         self.speech = Pronunciation(self)
         self._translation_busy = False
         self._job_cancelled = False
+        self._editing_active = False
+        self._restoring = False
+        self._autosave = QTimer(self)
+        self._autosave.setSingleShot(True)
+        self._autosave.setInterval(600)
+        self._autosave.timeout.connect(self.save_workspaces)
         self.views = QStackedWidget()
         self.library = QWidget()
         self.editor = QWidget()
@@ -243,6 +314,10 @@ class VocabularyPage(QDialog):
         layout.addWidget(self.speech_tools)
         self._view_changed()
         self.refresh()
+        for field in (self.word, self.meaning, self.phonetic, self.example, self.book):
+            field.textChanged.connect(lambda: self._autosave.start() if not self._restoring else None)
+        self.restore_import_draft()
+        self._refresh_resume()
 
     def _build_library(self):
         self.summary = QLabel()
@@ -314,15 +389,19 @@ class VocabularyPage(QDialog):
         self.limit.setRange(1, 200)
         self.limit.setValue(20)
         self.limit.setSuffix(" 个")
-        start = AnimatedButton("开始背诵")
+        start = self.start_button = AnimatedButton("开始 / 继续背诵")
         start.setObjectName("primaryButton")
         start.clicked.connect(self.start_study)
+        self.end_study_button = AnimatedButton("结束本轮")
+        self.end_study_button.setObjectName("dangerButton")
+        self.end_study_button.clicked.connect(self.end_study)
         study_row = QHBoxLayout()
         study_row.addWidget(QLabel("背诵方式"))
         study_row.addWidget(self.mode, 1)
         study_row.addWidget(QLabel("本轮数量"))
         study_row.addWidget(self.limit)
         study_row.addWidget(start)
+        study_row.addWidget(self.end_study_button)
         layout = QVBoxLayout(self.library)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
@@ -499,6 +578,7 @@ class VocabularyPage(QDialog):
         self.import_table.setWordWrap(False)
         self.import_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.import_table.itemChanged.connect(self._update_import_info)
+        self.import_table.itemChanged.connect(lambda: self._autosave.start() if not self._restoring else None)
         self.import_status = QLabel()
         self.import_status.setWordWrap(True)
         self.import_status.setTextFormat(Qt.TextFormat.PlainText)
@@ -511,8 +591,12 @@ class VocabularyPage(QDialog):
         self.confirm_import.clicked.connect(self.save_import)
         cancel = AnimatedButton("返回单词本")
         cancel.clicked.connect(self.show_library)
+        self.discard_import = AnimatedButton("舍弃草稿")
+        self.discard_import.setObjectName("dangerButton")
+        self.discard_import.clicked.connect(self.discard_import_draft)
         buttons = QHBoxLayout()
         buttons.addWidget(self.translate_import)
+        buttons.addWidget(self.discard_import)
         buttons.addStretch()
         buttons.addWidget(cancel)
         buttons.addWidget(self.confirm_import)
@@ -543,6 +627,59 @@ class VocabularyPage(QDialog):
         self.resume_import.show()
         self.import_status.setText("自动补全将调用所选模型服务；可双击单元格编辑，确认前不会写入单词本。")
         self.views.setCurrentWidget(self.import_page)
+        if not self._restoring:
+            self.save_workspaces()
+
+    def save_workspaces(self):
+        self._autosave.stop()
+        if self._restoring:
+            return
+        if self.import_table.rowCount():
+            try:
+                store.save_workspace("vocabulary:import", dict(filename=self.import_filename, rows=self._draft_rows()))
+            except (sqlite3.Error, ValueError) as error:
+                self.import_status.setText(f"导入草稿保存失败：{error}。请保留窗口并精简过长内容。")
+        if self._editing_active:
+            try:
+                values = self._editor_values()
+                if any(len(value) > 4000 for value in values.values()):
+                    raise ValueError("草稿字段最多 4000 个字符。")
+                store.save_workspace(self._word_draft_key(), values)
+            except (sqlite3.Error, ValueError) as error:
+                self.editor_status.setText(f"单词草稿保存失败：{error}")
+        self.study.save_progress()
+
+    def restore_import_draft(self):
+        try:
+            state = store.load_workspace("vocabulary:import")
+            if not state:
+                return
+            if not isinstance(state.get("filename"), str) or len(state["filename"]) > 260:
+                raise ValueError("文件名称无效")
+            rows = vocabulary.validate_rows(state.get("rows"), require_meaning=False)
+            self._restoring = True
+            self.show_import_draft(rows, state["filename"])
+            self.views.setCurrentWidget(self.library)
+            self.status.setText("已恢复词表草稿，点击“继续导入草稿”核对；自动翻译不会自动重发。")
+        except (sqlite3.Error, ValueError) as error:
+            self.status.setText(f"词表草稿暂时无法恢复：{error}")
+        finally:
+            self._restoring = False
+
+    def discard_import_draft(self):
+        if self._translation_busy:
+            return
+        if QMessageBox.question(self, "舍弃词表草稿", "舍弃尚未导入的词表草稿？已保存的单词不受影响。") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            store.save_workspace("vocabulary:import", None)
+        except sqlite3.Error as error:
+            self.import_status.setText(f"舍弃失败：{error}")
+            return
+        self._autosave.stop()
+        self.import_table.setRowCount(0)
+        self.resume_import.hide()
+        self.show_library()
 
     def _draft_rows(self):
         keys = ("word", "meaning", "phonetic", "example", "book")
@@ -558,12 +695,13 @@ class VocabularyPage(QDialog):
         if self._translation_busy:
             return
         try:
-            added, skipped = vocabulary.import_rows(self._draft_rows())
+            added, skipped = vocabulary.import_rows(self._draft_rows(), draft_key="vocabulary:import")
         except (sqlite3.Error, ValueError) as error:
             self.import_status.setText(f"未导入：{error}")
             return
         self.import_table.setRowCount(0)
         self.resume_import.hide()
+        self._autosave.stop()
         self.status.setText(f"已导入 {added} 个单词，跳过 {skipped} 个重复项；已有内容与进度保留。")
         self.show_library()
 
@@ -612,7 +750,7 @@ class VocabularyPage(QDialog):
     def _set_translation_controls(self):
         enabled = not self._translation_busy
         for widget in (self.translate_button, self.translate_import, self.confirm_import, self.save_button,
-                       self.add_button, self.upload_button, self.sample_button, self.profile, self.refresh_models,
+                       self.add_button, self.upload_button, self.sample_button, self.profile, self.refresh_models, self.discard_import,
                        self.word, self.meaning, self.phonetic, self.example, self.book):
             widget.setEnabled(enabled)
         self.import_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed
@@ -657,6 +795,7 @@ class VocabularyPage(QDialog):
                             item.setToolTip(entry[key])
         self._update_import_info()
         count = min(20, len(self._pending_words))
+        self.save_workspaces()
         self._job_done += count
         del self._pending_words[:count]
         if self._pending_words:
@@ -731,12 +870,27 @@ class VocabularyPage(QDialog):
         )
 
     def show_library(self):
+        self.save_workspaces()
+        self._editing_active = False
         self.cancel_translation()
         self.speech.stop()
         if self._translation_busy:
             self.status.setText("正在停止翻译，等待当前请求返回或超时；完成后可继续编辑。")
         self.views.setCurrentWidget(self.library)
         self.refresh()
+        self._refresh_resume()
+
+    def _refresh_resume(self):
+        pending = bool(self.study.words and self.study.index < len(self.study.words)) or bool(store.load_workspace("vocabulary:study"))
+        self.start_button.setText("继续本轮背诵" if pending else "开始背诵")
+        self.end_study_button.setVisible(pending)
+
+    def _word_draft_key(self):
+        return f"vocabulary:word:{self.editing_id if self.editing_id is not None else 'new'}"
+
+    def _editor_values(self):
+        return dict(word=self.word.text(), meaning=self.meaning.toPlainText(), phonetic=self.phonetic.text(),
+                    example=self.example.toPlainText(), book=self.book.text())
 
     def edit_word(self, word_id=None):
         if self._translation_busy:
@@ -750,12 +904,27 @@ class VocabularyPage(QDialog):
             self.status.setText(str(error))
             return
         self.editing_id = word_id
+        self._restoring = True
         self.editor_title.setText("编辑单词" if row else "新增单词")
         for field, key in ((self.word, "word"), (self.phonetic, "phonetic"), (self.book, "book")):
             field.setText(row[key] if row else "")
         self.meaning.setPlainText(row["meaning"] if row else "")
         self.example.setPlainText(row["example"] if row else "")
         self.editor_status.clear()
+        try:
+            draft = store.load_workspace(self._word_draft_key())
+            if draft and all(isinstance(draft.get(key), str) and len(draft[key]) <= 4000
+                             for key in ("word", "meaning", "phonetic", "example", "book")):
+                self.word.setText(draft["word"])
+                self.meaning.setPlainText(draft["meaning"])
+                self.phonetic.setText(draft["phonetic"])
+                self.example.setPlainText(draft["example"])
+                self.book.setText(draft["book"])
+                self.editor_status.setText("已恢复上次未保存的单词草稿。")
+        except sqlite3.Error as error:
+            self.editor_status.setText(f"读取草稿失败：{error}")
+        self._restoring = False
+        self._editing_active = True
         self.views.setCurrentWidget(self.editor)
         self.word.setFocus()
 
@@ -763,13 +932,13 @@ class VocabularyPage(QDialog):
         if self._translation_busy:
             return
         try:
-            vocabulary.save_word(dict(word=self.word.text(), meaning=self.meaning.toPlainText(),
-                                      phonetic=self.phonetic.text(), example=self.example.toPlainText(),
-                                      book=self.book.text()), self.editing_id)
+            vocabulary.save_word(self._editor_values(), self.editing_id, draft_key=self._word_draft_key())
         except (sqlite3.Error, ValueError) as error:
             self.editor_status.setText(str(error))
             return
         self.status.setText("单词已保存。")
+        self._editing_active = False
+        self._autosave.stop()
         self.show_library()
 
     def delete_word(self):
@@ -803,6 +972,12 @@ class VocabularyPage(QDialog):
                         row[key] = row[key] or previous[key]
                 row["book"] = row["book"] or Path(path).stem[:100]
             if any(not row["meaning"] for row in rows):
+                if self.import_table.rowCount() and QMessageBox.question(
+                    self, "替换词表草稿", "已有未完成的词表草稿。用新词表替换？选择取消可继续原草稿。",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                ) != QMessageBox.StandardButton.Yes:
+                    return
                 self.show_import_draft(rows, Path(path).name)
                 return
             added, skipped = vocabulary.import_rows(rows)
@@ -814,6 +989,15 @@ class VocabularyPage(QDialog):
 
     def start_study(self):
         try:
+            if self.study.words and self.study.index < len(self.study.words):
+                self.views.setCurrentWidget(self.study)
+                return
+            if store.load_workspace("vocabulary:study"):
+                if self.study.resume():
+                    self.views.setCurrentWidget(self.study)
+                else:
+                    self.status.setText(self.study.status.text())
+                return
             words = vocabulary.list_words(self.search.text().strip(), self.book_filter.currentData(),
                                           self.scope.currentData(), self.limit.value())
         except (sqlite3.Error, ValueError) as error:
@@ -825,7 +1009,23 @@ class VocabularyPage(QDialog):
         self.views.setCurrentWidget(self.study)
         self.study.begin(words, self.mode.currentData())
 
+    def end_study(self):
+        if QMessageBox.question(self, "结束本轮背诵", "结束本轮并放弃未记录的卡片？已记录的复习次数保留。") != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            store.save_workspace("vocabulary:study", None)
+        except sqlite3.Error as error:
+            self.status.setText(f"结束失败：{error}")
+            return
+        self.study._checkpoint.stop()
+        self.study.words = []
+        self.show_library()
+
     def reset(self):
+        self._autosave.stop()
+        self.study._checkpoint.stop()
+        self._restoring = True
+        self._editing_active = False
         self.cancel_translation()
         self.speech.stop()
         self.import_table.setRowCount(0)
@@ -834,4 +1034,6 @@ class VocabularyPage(QDialog):
         self.search.clear()
         self.scope.setCurrentIndex(0)
         self.status.clear()
+        self._restoring = False
+        self.restore_import_draft()
         self.show_library()

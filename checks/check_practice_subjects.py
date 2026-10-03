@@ -9,7 +9,7 @@ from unittest.mock import patch
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.database import store
 from app.ui.main_window import MainWindow
@@ -57,7 +57,8 @@ def check():
                     run.submit_answer()
                     assert run.solution.isVisible()
                     assert window._motion._target is run
-                run.reject()
+                with patch("app.ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
+                    window.end_practice()
             window.start_practice()
             setup.mode.setCurrentIndex(setup.mode.findData("all"))
             setup.subject.setCurrentIndex(setup.subject.findData("数学"))
@@ -70,7 +71,8 @@ def check():
             setup.accept()
             run = window._page_dialogs["practice_run"]
             assert {question["id"] for question in run.questions} == {wrong}
-            run.reject()
+            with patch("app.ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
+                window.end_practice()
             english = store.save_question(dict(stem="英语题", subject="英语"))
             window.start_practice()
             assert setup.subject.findData("英语") >= 0
@@ -80,7 +82,8 @@ def check():
             setup.accept()
             run = window._page_dialogs["practice_run"]
             assert {question["id"] for question in run.questions} == {ordinary, wrong, due}
-            run.reject()
+            with patch("app.ui.main_window.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
+                window.end_practice()
             for question_id in (ordinary, wrong, due, language, english):
                 store.delete_question(question_id)
             window.start_practice()

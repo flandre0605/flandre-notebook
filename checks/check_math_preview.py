@@ -28,7 +28,7 @@ def check(previews=None):
     expression = r"\lim_{x\to0}\frac{1}{x}\left(\frac{1}{\sin x}-\frac{1}{\tan x}\right)"
     stem = f"计算极限 ${expression}$"
     answer = r"$\frac{1}{2}$"
-    assert grade_answer("计算题", answer, "1/2") is None
+    assert grade_answer("计算题", answer, "1/2") is True
     assert grade_answer("计算题", answer, answer) is True
     assert grade_answer("填空题", "5", "4") is False
     explanation = (r"原式可化为 $\lim_{x\to0}\frac{1-\cos x}{x\sin x}$。"
@@ -98,7 +98,7 @@ def check(previews=None):
             practice.user_answer.setPlainText("1/2")
             practice.submit_answer()
             assert answer in practice.solution.text()
-            assert practice.result_choice.isEnabled() and "自评" in practice.judgement.text()
+            assert not practice.result_choice.isEnabled() and "正确" in practice.judgement.text()
             window.enter_mini_practice()
             mini = window._mini_practice_window
             mini.resize(440, 560)

@@ -11,7 +11,9 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from app.database import store
+from app.question_data import parse_options
 from app.services.attachments import ATTACHMENTS_DIR
+from app.services import recognition_drafts
 
 
 MAX_BACKUP_BYTES = 5 * 1024 * 1024 * 1024
@@ -117,6 +119,22 @@ def restore_backup(source: str | Path) -> Path:
         if version < store.SCHEMA_VERSION:
             store.initialize(staged_db)
         with closing(sqlite3.connect(staged_db)) as database:
+            database.execute("SELECT tags, knowledge_points, difficulty, source, options FROM questions LIMIT 0")
+            for (options,) in database.execute("SELECT options FROM questions"):
+                parse_options(options)
+            preferences = database.execute(
+                "SELECT id, mastered_days, unsure_days, unknown_days FROM review_preferences"
+            ).fetchall()
+            if len(preferences) != 1 or preferences[0][0] != 1 or any(
+                type(days) is not int or not 0 <= days <= 365 for days in preferences[0][1:]
+            ):
+                raise ValueError("备份中的复习间隔设置无效。")
+            database.execute("SELECT key, payload FROM workspace_state LIMIT 0")
+            for key, payload in database.execute(
+                "SELECT key, payload FROM workspace_state WHERE substr(key, 1, ?) = ?", (len("recognition:"), "recognition:")):
+                if len(payload.encode("utf-8")) > 5 * 1024 * 1024:
+                    raise ValueError("备份中的识题草稿过大。")
+                recognition_drafts.validate_state(key, json.loads(payload), staged_attachments)
             database.execute(
                 """SELECT id, word, meaning, phonetic, example, book, review_count,
                           streak, due_at, last_reviewed_at FROM vocabulary_words LIMIT 0"""

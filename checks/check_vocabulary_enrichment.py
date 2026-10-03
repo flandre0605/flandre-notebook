@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtCore import QObject, QSettings, Signal
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.database import store, vocabulary
 from app.services import vocabulary_translation as translation
@@ -184,7 +184,8 @@ def check(previews=None):
             page.resume_import.click()
             assert page.views.currentWidget() is page.import_page and page.import_table.item(20, 1).text()
             page.show_library()
-            page.import_file(txt)
+            with patch("app.ui.vocabulary_page.QMessageBox.question", return_value=QMessageBox.StandardButton.Yes):
+                page.import_file(txt)
             with patch("app.ui.vocabulary_page.translate_words", side_effect=lambda _p, batch: entries(batch)) as request:
                 page.translate_draft()
                 page.cancel_translation()
@@ -217,8 +218,8 @@ def check(previews=None):
                 page.translate_editor()
                 assert "HTTPS" in page.editor_status.text() and not page._translation_busy
             page.reset()
-            assert page.import_table.rowCount() == 0 and page.views.currentWidget() is page.library
-            assert not page.resume_import.isVisible()
+            assert page.import_table.rowCount() == 21 and page.views.currentWidget() is page.library
+            assert page.resume_import.isVisible()  # reset reloads pending work from the restored/current database
             window.close()
     print("PASS: TXT/CSV, atomic import, translation validation/fallback/batches/retry/cancel, pronunciation/speed persistence/spelling, compact UI")
 

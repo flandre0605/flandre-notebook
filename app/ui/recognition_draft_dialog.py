@@ -2,15 +2,18 @@ from PySide6.QtCore import QSize, Qt, Signal, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QScrollArea, QFrame, QVBoxLayout, QWidget,
+    QLineEdit, QMessageBox, QScrollArea, QFrame, QVBoxLayout, QWidget, QTabWidget,
 )
 from app.ui.motion import AnimatedButton
 from app.ui.math_text import MathEditor
 from app.ui.theme import STYLE
+from app.question_data import validate_question
+from app.ui.options_editor import OptionsEditor
 
 
 class RecognitionDraftDialog(QDialog):
     save_requested = Signal()
+    content_changed = Signal()
 
     def __init__(self, question, image_path, draft, parent=None):
         super().__init__(parent)
@@ -35,6 +38,7 @@ class RecognitionDraftDialog(QDialog):
         self.explanation = MathEditor()
         self.explanation.setMinimumHeight(150)
         self.is_wrong = QCheckBox("标记为错题")
+        self.options_editor = OptionsEditor()
         self.is_wrong.setChecked(bool(question["is_wrong"]) if question is not None else True)
 
         self.question_selector = QComboBox()
@@ -55,7 +59,12 @@ class RecognitionDraftDialog(QDialog):
         content = QHBoxLayout(body)
         content.setContentsMargins(0, 0, 0, 0)
         content.addWidget(self.image, 1)
-        content.addLayout(form, 2)
+        tabs = QTabWidget()
+        fields = QWidget()
+        fields.setLayout(form)
+        tabs.addTab(fields, "题目内容")
+        tabs.addTab(self.options_editor, "选择题选项")
+        content.addWidget(tabs, 2)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -95,6 +104,11 @@ class RecognitionDraftDialog(QDialog):
         self._load_draft(0)
         self._update_progress()
         self.question_selector.currentIndexChanged.connect(self._switch_draft)
+        for field in (self.stem.source, self.subject, self.question_type, self.answer.source, self.explanation.source):
+            field.textChanged.connect(lambda *_: self.content_changed.emit())
+        self.is_wrong.toggled.connect(lambda *_: self.content_changed.emit())
+        self.options_editor.changed.connect(self.content_changed.emit)
+        self.question_selector.currentIndexChanged.connect(lambda *_: self.content_changed.emit())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -114,6 +128,7 @@ class RecognitionDraftDialog(QDialog):
         self.question_type.setText(draft.get("question_type", ""))
         self.answer.setPlainText(draft.get("answer", ""))
         self.explanation.setPlainText(draft.get("explanation", ""))
+        self.options_editor.set_options(draft.get("options", {}))
         self.is_wrong.setChecked(
             bool(draft.get("is_wrong", self.question["is_wrong"] if self.question else True))
         )
@@ -157,6 +172,7 @@ class RecognitionDraftDialog(QDialog):
         self.buttons.button(QDialogButtonBox.StandardButton.Save).setText(
             f"确认并收录 {len(self.drafts)} 道题"
         )
+        self.content_changed.emit()
 
     def _accept_if_valid(self):
         self._save_current()
@@ -169,6 +185,13 @@ class RecognitionDraftDialog(QDialog):
             self.validation_status.setText(f"第 {missing + 1} 道题没有题干，请补充后再收录。")
             return
         self.validation_status.clear()
+        for index, draft in enumerate(self.drafts):
+            try:
+                validate_question(draft)
+            except ValueError as error:
+                self.question_selector.setCurrentIndex(index)
+                self.validation_status.setText(f"第 {index + 1} 道题：{error}")
+                return
         self.save_requested.emit()
 
     def values(self):
@@ -177,10 +200,12 @@ class RecognitionDraftDialog(QDialog):
 
     def _field_values(self):
         return {
+            **self.drafts[self.current_index],
             "stem": self.stem.toPlainText(),
             "subject": self.subject.text(),
             "question_type": self.question_type.text(),
             "answer": self.answer.toPlainText(),
             "explanation": self.explanation.toPlainText(),
             "is_wrong": int(self.is_wrong.isChecked()),
+            "options": self.options_editor.options(),
         }
