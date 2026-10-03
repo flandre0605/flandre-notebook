@@ -21,7 +21,7 @@
 
 安装需要 Git、Python 和网络。安装器下载固定版本，并创建独立虚拟环境。主程序 requirements.txt 不增加反代依赖，不安装 Playwright 或 Chromium。
 
-- 源码与运行目录：`data/tools/deeperseeker/`，独立环境 `.venv/`。
+- 源码与运行目录：新安装使用 `%LOCALAPPDATA%\FlandreNotebook\data\tools\deeperseeker/`，独立环境 `.venv/`；启动前设置 `FLANDRE_DATA_DIR` 时使用指定数据目录。已安装的旧项目 `data/tools/deeperseeker/` 继续原地使用，不自动搬迁虚拟环境。设置页“数据存储”显示实际服务目录。
 - 固定源码版本：`7e550f552b5b31429dcf5213394ca3e74154708f`。已有不同版本时拒绝自动覆盖。
 - 本地地址：`http://127.0.0.1:4000`；错题本基础地址为 `/v1`，请求路径 `/chat/completions`，模型 `v4.1flash`。
 - 管理密码与代理 Key 使用随机值，保存在系统凭据管理器，通过进程环境传入；本地服务的默认账号密码不会使用。

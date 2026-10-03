@@ -4,16 +4,16 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 from app.question_data import QUESTION_FIELDS, database_values, validate_question
+from app.paths import DATA_DIR
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
 DATABASE_PATH = DATA_DIR / "questions.db"
 SCHEMA_VERSION = 9
 
 
 @contextmanager
-def _connection(database_path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connection]:
+def _connection(database_path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    database_path = Path(database_path) if database_path is not None else DATABASE_PATH
     database_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(database_path)
     connection.row_factory = sqlite3.Row
@@ -28,7 +28,7 @@ def _connection(database_path: Path = DATABASE_PATH) -> Iterator[sqlite3.Connect
         connection.close()
 
 
-def initialize(database_path: Path = DATABASE_PATH) -> None:
+def initialize(database_path: Path | None = None) -> None:
     with _connection(database_path) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:

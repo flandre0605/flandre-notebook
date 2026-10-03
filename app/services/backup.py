@@ -103,53 +103,7 @@ def restore_backup(source: str | Path) -> Path:
                 with archive.open(info) as input_file, target.open("wb") as output_file:
                     shutil.copyfileobj(input_file, output_file)
 
-        with closing(sqlite3.connect(staged_db)) as database:
-            result = database.execute("PRAGMA integrity_check").fetchone()[0]
-            version = database.execute("PRAGMA user_version").fetchone()[0]
-            tables = {
-                row[0]
-                for row in database.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                )
-            }
-            if result != "ok" or "questions" not in tables:
-                raise ValueError("备份数据库损坏或格式无效。")
-            if version < 1 or version > store.SCHEMA_VERSION:
-                raise ValueError("备份数据库版本不兼容，请使用相同版本的应用恢复。")
-        if version < store.SCHEMA_VERSION:
-            store.initialize(staged_db)
-        with closing(sqlite3.connect(staged_db)) as database:
-            database.execute("SELECT tags, knowledge_points, difficulty, source, options FROM questions LIMIT 0")
-            for (options,) in database.execute("SELECT options FROM questions"):
-                parse_options(options)
-            preferences = database.execute(
-                "SELECT id, mastered_days, unsure_days, unknown_days FROM review_preferences"
-            ).fetchall()
-            if len(preferences) != 1 or preferences[0][0] != 1 or any(
-                type(days) is not int or not 0 <= days <= 365 for days in preferences[0][1:]
-            ):
-                raise ValueError("备份中的复习间隔设置无效。")
-            database.execute("SELECT key, payload FROM workspace_state LIMIT 0")
-            for key, payload in database.execute(
-                "SELECT key, payload FROM workspace_state WHERE substr(key, 1, ?) = ?", (len("recognition:"), "recognition:")):
-                if len(payload.encode("utf-8")) > 5 * 1024 * 1024:
-                    raise ValueError("备份中的识题草稿过大。")
-                recognition_drafts.validate_state(key, json.loads(payload), staged_attachments)
-            database.execute(
-                """SELECT id, word, meaning, phonetic, example, book, review_count,
-                          streak, due_at, last_reviewed_at FROM vocabulary_words LIMIT 0"""
-            )
-            for (relative_path,) in database.execute("SELECT relative_path FROM attachments"):
-                relative = PurePosixPath(relative_path)
-                if (
-                    relative.is_absolute()
-                    or ".." in relative.parts
-                    or not relative.parts
-                    or relative.parts[0] != "attachments"
-                ):
-                    raise ValueError("备份数据库包含无效附件路径。")
-                if not staged_attachments.joinpath(*relative.parts[1:]).is_file():
-                    raise ValueError("备份缺少题目引用的图片附件。")
+        validate_data_directory(staging)
 
         recovery = store.DATA_DIR / f"pre-restore-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:6]}.zip"
         create_backup(recovery)
@@ -169,3 +123,58 @@ def restore_backup(source: str | Path) -> Path:
         if old_attachments.exists():
             shutil.rmtree(old_attachments, ignore_errors=True)
         return recovery
+
+
+def validate_data_directory(data_dir: Path) -> None:
+    """Validate and upgrade a staged database and its referenced originals."""
+    staged_db = Path(data_dir) / "questions.db"
+    staged_attachments = Path(data_dir) / "attachments"
+    with closing(sqlite3.connect(staged_db)) as database:
+        result = database.execute("PRAGMA integrity_check").fetchone()[0]
+        version = database.execute("PRAGMA user_version").fetchone()[0]
+        tables = {
+            row[0]
+            for row in database.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if result != "ok" or "questions" not in tables:
+            raise ValueError("备份数据库损坏或格式无效。")
+        if version < 1 or version > store.SCHEMA_VERSION:
+            raise ValueError("备份数据库版本不兼容，请使用相同版本的应用恢复。")
+    if version < store.SCHEMA_VERSION:
+        store.initialize(staged_db)
+    with closing(sqlite3.connect(staged_db)) as database:
+        database.execute("SELECT tags, knowledge_points, difficulty, source, options FROM questions LIMIT 0")
+        for (options,) in database.execute("SELECT options FROM questions"):
+            parse_options(options)
+        preferences = database.execute(
+            "SELECT id, mastered_days, unsure_days, unknown_days FROM review_preferences"
+        ).fetchall()
+        if len(preferences) != 1 or preferences[0][0] != 1 or any(
+            type(days) is not int or not 0 <= days <= 365 for days in preferences[0][1:]
+        ):
+            raise ValueError("备份中的复习间隔设置无效。")
+        database.execute("SELECT key, payload FROM workspace_state LIMIT 0")
+        for key, payload in database.execute(
+            "SELECT key, payload FROM workspace_state WHERE substr(key, 1, ?) = ?", (len("recognition:"), "recognition:")):
+            if len(payload.encode("utf-8")) > 5 * 1024 * 1024:
+                raise ValueError("备份中的识题草稿过大。")
+            recognition_drafts.validate_state(key, json.loads(payload), staged_attachments)
+        database.execute(
+            """SELECT id, word, meaning, phonetic, example, book, review_count,
+                      streak, due_at, last_reviewed_at FROM vocabulary_words LIMIT 0"""
+        )
+        for (relative_path,) in database.execute("SELECT relative_path FROM attachments"):
+            relative = PurePosixPath(relative_path)
+            if (
+                relative.is_absolute()
+                or "\\" in relative_path
+                or ".." in relative.parts
+                or not relative.parts
+                or relative.parts[0] != "attachments"
+            ):
+                raise ValueError("备份数据库包含无效附件路径。")
+            image = staged_attachments.joinpath(*relative.parts[1:]).resolve()
+            if not image.is_relative_to(staged_attachments.resolve()) or not image.is_file():
+                raise ValueError("备份缺少题目引用的图片附件。")

@@ -97,9 +97,8 @@ QListWidget::item:hover { background: #fff4f8; }
 QListWidget::item:selected { background: #fbe1ec; color: #913455; }
 QCheckBox { color: #705361; spacing: 9px; }
 QRadioButton { color: #705361; spacing: 9px; }
-QRadioButton::indicator { width: 17px; height: 17px; border: 1px solid #cfa4b6; border-radius: 9px; background: white; }
-QRadioButton::indicator:checked { border: 5px solid #b54b72; background: white; }
-QRadioButton::indicator:hover { border-color: #b54b72; }
+QRadioButton::indicator { width: 18px; height: 18px; border: none; background: transparent; image: url("@assets/radio_unchecked.svg"); }
+QRadioButton::indicator:checked { image: url("@assets/radio_checked.svg"); }
 QCheckBox::indicator { width: 17px; height: 17px; border: 1px solid #cfa4b6; border-radius: 5px; background: white; }
 QCheckBox::indicator:hover { border-color: #b54b72; background: #fff4f8; }
 QCheckBox::indicator:checked { background: #b54b72; border-color: #b54b72; image: url("@assets/check.svg"); }

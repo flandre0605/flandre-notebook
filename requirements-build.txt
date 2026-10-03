@@ -1,0 +1,8 @@
+-r requirements.txt
+PySide6==6.11.2
+keyring==25.7.0
+ziamath==0.13
+ziafont==0.11
+latex2mathml==3.81.1
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8

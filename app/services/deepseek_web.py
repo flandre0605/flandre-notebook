@@ -1,7 +1,6 @@
 """Optional local DeeperSeeker bridge; account login stays in its dashboard."""
 import json
 import os
-from pathlib import Path
 import secrets
 import socket
 import subprocess
@@ -11,9 +10,11 @@ import urllib.error
 import urllib.request
 
 from app.services import credentials
+from app.paths import DATA_DIR, LEGACY_DATA_DIR
 
-ROOT = Path(__file__).resolve().parents[2]
-BRIDGE = ROOT / "data" / "tools" / "deeperseeker"
+# Existing virtual environments contain absolute paths: keep an installed bridge in place.
+_legacy_bridge = LEGACY_DATA_DIR / "tools" / "deeperseeker"
+BRIDGE = _legacy_bridge if (_legacy_bridge / "app.py").is_file() else DATA_DIR / "tools" / "deeperseeker"
 REVISION = "7e550f552b5b31429dcf5213394ca3e74154708f"
 ORIGIN = "http://127.0.0.1:4000"
 KEY_REF = "deepseek-web-local"
@@ -77,7 +78,7 @@ def start():
         except (OSError, ValueError, RuntimeError):
             time.sleep(0.2)
     stop()
-    raise RuntimeError("网页版服务启动失败，请查看 data/tools/deeperseeker/service.log。")
+    raise RuntimeError(f"网页版服务启动失败，请查看 {BRIDGE / 'service.log'}。")
 
 
 def shutdown():
