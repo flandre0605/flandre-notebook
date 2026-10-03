@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QHBox
 from app.services import question_files
 from app.ui.motion import AnimatedButton
 from app.ui.options_editor import OptionsEditor
+from app.question_data import QUESTION_LABELS
 
 
 class QuestionFilesDialog(QDialog):
@@ -35,7 +36,8 @@ class QuestionFilesDialog(QDialog):
         actions.addStretch()
         layout.addLayout(actions)
         self.table = QTableWidget(0, len(question_files.FIELDS))
-        self.table.setHorizontalHeaderLabels(["题干 *", "学科", "题型", "答案", "解析", "标签", "知识点", "难度", "来源", "选项", "错题（0/1）"])
+        self.table.setHorizontalHeaderLabels([QUESTION_LABELS[field] + (" *" if field == "stem" else "（0/1）" if field == "is_wrong" else "")
+                                             for field in question_files.FIELDS])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self.table.setColumnWidth(0, 260)
         for column in range(1, self.table.columnCount()):
@@ -66,7 +68,7 @@ class QuestionFilesDialog(QDialog):
         self.format = QComboBox()
         for name in ("JSON", "CSV", "PDF"):
             self.format.addItem(name, name.lower())
-        self.solutions = QCheckBox("PDF 包含答案与解析")
+        self.solutions = QCheckBox("PDF 包含答案、解析与笔记")
         self.solutions.setChecked(True)
         self.solutions.setEnabled(False)
         self.format.currentIndexChanged.connect(lambda: self.solutions.setEnabled(self.format.currentData() == "pdf"))

@@ -52,7 +52,8 @@ def verify_package(app, window, report_path):
         width, height, formula = _formula_image(r"\frac{1}{2}+x^2", False)
         assert width > 0 and height > 0 and formula
         question_id = store.save_question(dict(stem=r"Select $x^2$", question_type="单选题",
-                                              answer="A", subject="数学", options={"A": "yes", "B": "no"}))
+                                              answer="A", subject="数学", grade="Grade12", notes=r"A local reminder $x^2$",
+                                              options={"A": "yes", "B": "no"}))
         original = root / "probe.png"
         image = QImage(24, 24, QImage.Format.Format_RGB32)
         image.fill(0xffeeee)
@@ -63,12 +64,19 @@ def verify_package(app, window, report_path):
         assert (root / "probe.pdf").read_bytes().startswith(b"%PDF")
         archive = backup.create_backup(root / "probe.zip")
         backup.restore_backup(archive)
+        assert store.get_question(question_id)["grade"] == "Grade12"
+        assert store.get_question(question_id)["notes"] == r"A local reminder $x^2$"
         window.show_library()
         window._open_practice([store.get_question(question_id)])
         practice = window._page_dialogs["practice_run"]
+        assert not practice.notes_toggle.isVisible() and not practice.notes_view.isVisible()
         practice._choice_buttons["A"].click()
         practice.submit_answer()
         assert practice.result_choice.currentData() == "correct"
+        practice.notes_toggle.click()
+        assert practice.notes_view.isVisible() and "local reminder" in practice.notes_view.toPlainText()
+        practice.is_wrong.setChecked(True)
+        assert store.get_question(question_id)["is_wrong"] == 0
         speech = Pronunciation(window)
         report["speech_engine"] = speech.engine.engine() if speech.engine else "unavailable"
         report["english_voices"] = len(speech.voices)
@@ -106,7 +114,31 @@ def verify_package(app, window, report_path):
             report["native_hotkey_dispatch"] = True
         window._motion.finish()
         app.processEvents()
+        assert practice.result_choice.geometry().bottom() < practice.mastery.geometry().top()
+        window._practice_scroll.ensureWidgetVisible(practice.record_button)
+        app.processEvents()
         assert window.grab().save(str(root / "runtime-preview.png"))
+        window.enter_mini_practice()
+        mini = window._mini_practice_window
+        mini.resize(440, 420)
+        app.processEvents()
+        mini.scroll.ensureWidgetVisible(practice.record_button)
+        app.processEvents()
+        assert mini.scroll.horizontalScrollBar().maximum() == 0
+        assert mini.scroll.viewport().rect().contains(practice.record_button.mapTo(mini.scroll.viewport(), practice.record_button.rect().center()))
+        assert mini.grab().save(str(root / "mini-preview.png"))
+        window.restore_mini_practice()
+        window._motion.finish()
+        window.resize(1040, 680)
+        app.processEvents()
+        window._practice_scroll.ensureWidgetVisible(practice.record_button)
+        app.processEvents()
+        assert window._practice_scroll.horizontalScrollBar().maximum() == 0
+        assert window._practice_scroll.viewport().rect().contains(practice.record_button.mapTo(window._practice_scroll.viewport(), practice.record_button.rect().center()))
+        assert window.grab().save(str(root / "small-preview.png"))
+        practice.record_and_continue()
+        assert store.get_question(question_id)["is_wrong"] == 1
+        report.update(personal_fields=True, practice_marker=True, practice_scroll=True)
         report.update(ok=True, data_dir=str(root), formula=True, pdf=True, backup=True, structured_practice=True)
     except Exception:
         report["error"] = traceback.format_exc()

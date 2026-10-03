@@ -133,13 +133,18 @@ class QuestionDialog(QDialog):
         self.answer.setPlaceholderText("标准答案；多个可接受答案用 | 分隔")
         self.explanation = MathEditor()
         self.explanation.setMinimumHeight(85)
+        self.notes = MathEditor()
+        self.notes.setMinimumHeight(150)
         self.is_wrong = QCheckBox("标记为错题")
         self.options_editor = OptionsEditor()
         self.metadata_inputs = {}
         metadata_form = QFormLayout()
-        for field, caption in (("tags", "标签"), ("knowledge_points", "知识点"), ("source", "来源")):
+        for field, caption in (("grade", "年级"), ("tags", "标签"), ("knowledge_points", "知识点"), ("source", "来源")):
             editor = QLineEdit()
-            editor.setPlaceholderText("多个项目可用逗号分隔" if field != "source" else "例如课本、试卷名称、页码")
+            editor.setPlaceholderText("例如高一、大学一年级" if field == "grade" else
+                                      "例如课本、试卷名称、页码" if field == "source" else "多个项目可用逗号分隔")
+            if field == "grade":
+                editor.setMaxLength(100)
             self.metadata_inputs[field] = editor
             metadata_form.addRow(caption, editor)
         self.difficulty = QComboBox()
@@ -180,6 +185,7 @@ class QuestionDialog(QDialog):
         tabs.addTab(content_page, "题目内容")
         tabs.addTab(metadata_page, "分类与来源")
         tabs.addTab(self.options_editor, "选择题选项")
+        tabs.addTab(self.notes, "个人笔记")
         layout.addWidget(tabs)
         layout.addWidget(self.validation_status)
         layout.addWidget(buttons)
@@ -190,10 +196,11 @@ class QuestionDialog(QDialog):
             self.question_type.setText(question["question_type"])
             self.answer.setPlainText(question["answer"])
             self.explanation.setPlainText(question["explanation"])
+            self.notes.setPlainText(dict(question).get("notes", ""))
             self.is_wrong.setChecked(bool(question["is_wrong"]))
             self.options_editor.set_options(dict(question).get("options", {}))
             for field, editor in self.metadata_inputs.items():
-                editor.setText(question[field])
+                editor.setText(dict(question).get(field, ""))
             self.difficulty.setCurrentIndex(max(0, self.difficulty.findData(question["difficulty"])))
         state = store.load_workspace(self.draft_key) if on_save else None
         try:
@@ -206,6 +213,7 @@ class QuestionDialog(QDialog):
             self.question_type.setText(state["question_type"])
             self.answer.setPlainText(state["answer"])
             self.explanation.setPlainText(state["explanation"])
+            self.notes.setPlainText(state["notes"])
             self.is_wrong.setChecked(bool(state["is_wrong"]))
             self.options_editor.set_options(state["options"])
             for field, editor in self.metadata_inputs.items():
@@ -217,7 +225,7 @@ class QuestionDialog(QDialog):
         self._autosave.setInterval(600)
         self._autosave.timeout.connect(self.save_draft)
         for editor in (self.stem.source, self.subject, self.question_type, self.answer.source,
-                       self.explanation.source, *self.metadata_inputs.values()):
+                       self.explanation.source, self.notes.source, *self.metadata_inputs.values()):
             editor.textChanged.connect(lambda: self._autosave.start())
         self.is_wrong.toggled.connect(lambda: self._autosave.start())
         self.difficulty.currentIndexChanged.connect(lambda: self._autosave.start())
@@ -266,6 +274,7 @@ class QuestionDialog(QDialog):
             "question_type": self.question_type.text(),
             "answer": self.answer.toPlainText(),
             "explanation": self.explanation.toPlainText(),
+            "notes": self.notes.toPlainText(),
             "is_wrong": int(self.is_wrong.isChecked()),
             **{field: editor.text() for field, editor in self.metadata_inputs.items()},
             "difficulty": self.difficulty.currentData(),
@@ -537,11 +546,13 @@ class MainWindow(QMainWindow):
         self.preview_tabs = QTabWidget()
         self.preview_stem = MathBrowser()
         self.preview_solution = MathBrowser()
-        for browser in (self.preview_stem, self.preview_solution):
+        self.preview_notes = MathBrowser()
+        for browser in (self.preview_stem, self.preview_solution, self.preview_notes):
             browser.setObjectName("previewText")
             browser.setOpenLinks(False)
         self.preview_tabs.addTab(self.preview_stem, "题目内容")
         self.preview_tabs.addTab(self.preview_solution, "答案与解析")
+        self.preview_tabs.addTab(self.preview_notes, "个人笔记")
         self.preview_tabs.currentChanged.connect(
             lambda _index: self._motion.play(self.preview_tabs.currentWidget())
         )
@@ -848,7 +859,15 @@ class MainWindow(QMainWindow):
             header.addWidget(restart_button)
         header.addWidget(back_button)
         layout.addLayout(header)
-        layout.addWidget(dialog, 1)
+        if key == "practice_run":
+            self._practice_scroll = QScrollArea()
+            self._practice_scroll.setObjectName("practiceScroll")
+            self._practice_scroll.setWidgetResizable(True)
+            self._practice_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            self._practice_scroll.setWidget(dialog)
+            layout.addWidget(self._practice_scroll, 1)
+        else:
+            layout.addWidget(dialog, 1)
         self.page_stack.addWidget(container)
         self._pages[key] = container
         self._page_containers[key] = container
@@ -1008,11 +1027,13 @@ class MainWindow(QMainWindow):
             self.preview_tabs.setCurrentIndex(0)
         self._preview_id = question_id
         self.preview_tabs.setTabEnabled(1, question is not None)
+        self.preview_tabs.setTabEnabled(2, question is not None)
         if question is None:
             self.preview_title.setText("题目详情")
             self.preview_meta.setText("选择一道题目，查看完整内容")
             self.preview_stem.setPlainText(error_message)
             self.preview_solution.clear()
+            self.preview_notes.clear()
             return
         self.preview_title.setText(f"题目 #{question_id}")
         self.preview_meta.setText(" · ".join((
@@ -1021,7 +1042,7 @@ class MainWindow(QMainWindow):
             "已标记为错题" if question["is_wrong"] else "普通题目",
         )))
         classification = " · ".join(f"{caption}：{question[field]}" for field, caption in
-                                    (("difficulty", "难度"), ("tags", "标签"), ("knowledge_points", "知识点"), ("source", "来源"))
+                                    (("grade", "年级"), ("difficulty", "难度"), ("tags", "标签"), ("knowledge_points", "知识点"), ("source", "来源"))
                                     if question[field])
         if classification:
             self.preview_meta.setText(self.preview_meta.text() + "\n" + classification)
@@ -1029,6 +1050,7 @@ class MainWindow(QMainWindow):
         answer = question["answer"] or "暂未填写参考答案"
         explanation = question["explanation"] or "暂未填写解析"
         self.preview_solution.setSections((("参考答案", answer), ("解析", explanation)))
+        self.preview_notes.setPlainText(question["notes"] or "暂未填写个人笔记")
         if changed:
             self._motion.play(self.preview_tabs.currentWidget())
 
@@ -1140,9 +1162,10 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         layout = QVBoxLayout(dialog)
         browser = MathBrowser()
-        browser.setSections([(f"题目 #{question['id']}", question_text(question)),
+        browser.setSections([(f"题目 #{question['id']}" + (f" · {question['grade']}" if question["grade"] else ""), question_text(question)),
                              ("答案", question["answer"] or "暂无标准答案"),
-                             ("解析", question["explanation"] or "暂无解析")])
+                             ("解析", question["explanation"] or "暂无解析"),
+                             ("个人笔记", question["notes"] or "暂无个人笔记")])
         layout.addWidget(browser)
         self._embed_dialog_page("reader", dialog, "阅读题目")
         dialog.rejected.connect(lambda: self._leave_dialog_page("reader"))
@@ -1337,7 +1360,7 @@ class MainWindow(QMainWindow):
         if practice is None:
             return
         self._motion.finish()
-        self._page_containers["practice_run"].layout().removeWidget(practice)
+        self._practice_scroll.takeWidget()
         mini = MiniPracticeWindow(practice, self)
         self._mini_practice_window = mini
         mini.restore_requested.connect(self.restore_mini_practice)
@@ -1357,10 +1380,8 @@ class MainWindow(QMainWindow):
         self._motion.finish()
         self._mini_practice_window = None
         practice = mini.take_practice()
-        container = self._page_containers["practice_run"]
-        practice.setParent(container)
         practice.setWindowFlags(Qt.WindowType.Widget)
-        container.layout().addWidget(practice, 1)
+        self._practice_scroll.setWidget(practice)
         mini.hide()
         mini.deleteLater()
         if show_main:

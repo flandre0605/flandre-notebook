@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from app.database import store
-from app.question_data import parse_options
+from app.question_data import QUESTION_FIELDS, validate_question
 from app.services.attachments import ATTACHMENTS_DIR
 from app.services import recognition_drafts
 
@@ -145,9 +145,9 @@ def validate_data_directory(data_dir: Path) -> None:
     if version < store.SCHEMA_VERSION:
         store.initialize(staged_db)
     with closing(sqlite3.connect(staged_db)) as database:
-        database.execute("SELECT tags, knowledge_points, difficulty, source, options FROM questions LIMIT 0")
-        for (options,) in database.execute("SELECT options FROM questions"):
-            parse_options(options)
+        database.row_factory = sqlite3.Row
+        for question in database.execute(f"SELECT {', '.join(QUESTION_FIELDS)} FROM questions"):
+            validate_question(dict(question))
         preferences = database.execute(
             "SELECT id, mastered_days, unsure_days, unknown_days FROM review_preferences"
         ).fetchall()

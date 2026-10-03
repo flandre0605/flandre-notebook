@@ -2,8 +2,10 @@
 import json
 import re
 
-QUESTION_FIELDS = ("stem", "subject", "question_type", "answer", "explanation",
-                   "tags", "knowledge_points", "difficulty", "source", "options", "is_wrong")
+QUESTION_LABELS = dict(stem="题干", subject="学科", question_type="题型", answer="答案", explanation="解析",
+                       tags="标签", knowledge_points="知识点", difficulty="难度", source="来源",
+                       grade="年级", notes="个人笔记", options="选项", is_wrong="错题")
+QUESTION_FIELDS = tuple(QUESTION_LABELS)
 TEXT_FIELDS = tuple(field for field in QUESTION_FIELDS if field not in ("options", "is_wrong"))
 
 
@@ -41,6 +43,8 @@ def validate_question(question, original=None, draft=False):
         raise ValueError("题干不能为空。")
     if result["difficulty"] not in ("", "简单", "中等", "困难"):
         raise ValueError("难度应为简单、中等、困难，或留空。")
+    if len(result["grade"]) > 100 or "\n" in result["grade"] or "\r" in result["grade"]:
+        raise ValueError("年级应为不超过 100 字的单行文本。")
     wrong = question.get("is_wrong", defaults.get("is_wrong", 0))
     if isinstance(wrong, str):
         wrong = wrong.strip().casefold()

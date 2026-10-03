@@ -15,7 +15,7 @@ QWidget#homeCanvas, QScrollArea#homeScroll { background: #fff8fb; border: none; 
 QFrame#homeHero { background: #fce8f1; border: 1px solid #f0cddd; border-radius: 18px; }
 QFrame#homeStatCard, QFrame#homeFeatureCard { background: white; border: 1px solid #efdce5; border-radius: 14px; }
 QLabel#homeStatValue { color: #9f4565; font-size: 25px; font-weight: 700; }
-QScrollArea#wordStudyScroll { background: transparent; border: none; }
+QScrollArea#wordStudyScroll, QScrollArea#practiceScroll { background: transparent; border: none; }
 QLabel { color: #503845; }
 QLabel#pageTitle { color: #422e3b; font-size: 27px; font-weight: 700; }
 QLabel#pageSubtitle, QLabel#muted { color: #806772; font-size: 12px; }

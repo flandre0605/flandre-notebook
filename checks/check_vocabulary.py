@@ -46,7 +46,7 @@ def check(preview_directory=None):
             db.execute("DROP TABLE vocabulary_words")
             db.execute("DROP TABLE workspace_state")
             db.execute("DROP TABLE review_preferences")
-            for field in ("tags", "knowledge_points", "difficulty", "source", "options"):
+            for field in ("tags", "knowledge_points", "difficulty", "source", "options", "grade", "notes"):
                 db.execute(f"ALTER TABLE questions DROP COLUMN {field}")
             db.execute("PRAGMA user_version = 5")
         legacy = root / "legacy.zip"

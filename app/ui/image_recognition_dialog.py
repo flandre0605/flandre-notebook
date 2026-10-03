@@ -273,11 +273,14 @@ class ImageRecognitionDialog(QDialog):
             return
         profile_id = self.profile.currentData()
         profile = store.get_profile(profile_id) if profile_id else None
-        if profile is None:
-            self.status.setText("没有可用的视觉模型，请先到设置中启用一个视觉模型。")
+        if profile is None or not profile["enabled"] or not profile["vision_enabled"]:
+            self.profiles = fill_model_choices(self.profile, "vision")
+            self._set_input_enabled(True)
+            self.status.setText("所选配置已不可用，模型列表已刷新；请选择可用视觉模型后再开始。")
             return
         try:
-            if self.session_key is None:
+            if self.session_key is None or (self._draft_state or {}).get("drafts"):
+                # Re-recognition is a new task: never replace a user's reviewed draft or local notes.
                 self.session_key, self._draft_state, self.image_path = recognition_drafts.create(self.image_path, profile_id)
             self._draft_state["profile_id"] = profile_id
             self.save_progress()

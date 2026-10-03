@@ -7,10 +7,10 @@ from pathlib import Path
 import tempfile
 
 from app.database import store
-from app.question_data import QUESTION_FIELDS, TEXT_FIELDS, database_values, question_text, validate_question
+from app.question_data import QUESTION_FIELDS, QUESTION_LABELS, TEXT_FIELDS, database_values, question_text, validate_question
 
 FIELDS = QUESTION_FIELDS
-HEADERS = dict(zip(("题干", "学科", "题型", "答案", "解析", "标签", "知识点", "难度", "来源", "选项", "错题"), FIELDS))
+HEADERS = {label: field for field, label in QUESTION_LABELS.items()}
 MAX_ROWS = 5000
 MAX_BYTES = 5 * 1024 * 1024
 
@@ -150,10 +150,14 @@ def write_questions(path, rows, include_solutions=True):
             for index, question in enumerate(rows, 1):
                 sections.append(f"<h2>{index}. {escape(question['subject'] or '未分类')} · "
                                 f"{escape(question['question_type'] or '未设题型')}</h2>")
+                if question.get("grade"):
+                    sections.append(f"<p>年级：{escape(question['grade'])}</p>")
                 sections.append(math_html(question_text(question), 650))
                 if include_solutions:
                     sections.append("<h3>答案</h3>" + math_html(question["answer"] or "暂无标准答案", 650))
                     sections.append("<h3>解析</h3>" + math_html(question["explanation"] or "暂无解析", 650))
+                    if question.get("notes"):
+                        sections.append("<h3>个人笔记</h3>" + math_html(question["notes"], 650))
                 sections.append("<hr>")
             document = QTextDocument()
             document.setDefaultStyleSheet("body {font-family:'Microsoft YaHei UI';font-size:11pt;color:#252030;}")

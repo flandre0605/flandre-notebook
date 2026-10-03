@@ -1,13 +1,13 @@
 # Windows 构建与交付
 
-更新：2026-10-03。本地交付版本 `0.2.0-preview.1`；尚未发布这个版本到 GitHub。
+更新：2026-10-03。本地交付版本 `0.3.0-preview.1`；尚未发布这个版本到 GitHub。
 
 ## 用户如何运行
 
-- 安装版：运行 `FlandreNotebook-0.2.0-preview.1-setup-x64.exe`，使用中文安装向导，安装到当前用户目录；安装后从开始菜单打开。桌面快捷方式默认不勾选。
-- 免安装版：完整解压 `FlandreNotebook-0.2.0-preview.1-portable-x64.zip`，运行 `FlandreNotebook/FlandreNotebook.exe`，保留旁边的 `_internal/`。无需另装 Python。
+- 安装版：运行 `FlandreNotebook-0.3.0-preview.1-setup-x64.exe`，使用中文安装向导，安装到当前用户目录；安装后从开始菜单打开。桌面快捷方式默认不勾选。
+- 免安装版：完整解压 `FlandreNotebook-0.3.0-preview.1-portable-x64.zip`，运行 `FlandreNotebook/FlandreNotebook.exe`，保留旁边的 `_internal/`。无需另装 Python。
 - 本次使用 Qt 6.11.2 构建，目标 Windows 10 1809 或更新版本、Windows 11 x64；实际运行验收在 Windows 11 进行，Windows 10 的范围来自 [Qt 支持平台](https://doc.qt.io/qt-6.11/supported-platforms.html)，尚未在 Windows 10 机器实测。
-- 学习数据默认位于 `%LOCALAPPDATA%\FlandreNotebook\data`，与程序安装目录独立；卸载程序保留学习数据，换电脑使用 ZIP 备份/恢复。API Key 需重新录入。
+- 学习数据默认位于 `%LOCALAPPDATA%\FlandreNotebook\data`，与程序安装目录独立；卸载程序保留学习数据，换电脑使用 ZIP 备份/恢复。API Key 需重新录入。当前题库 schema v10，新增年级和个人笔记；升级前在旧版导出 ZIP，旧备份可恢复到新版，旧程序不能直接打开已升级题库。
 - 旧源码版：先关闭并备份，再启动更新后的源码版一次，自动将旧项目 `data/` 迁入固定用户目录；也可在旧版导出 ZIP，安装新版后恢复。安装器不搜索磁盘上的其他源码目录。
 - “免安装”指不用安装程序；默认仍使用固定用户数据目录。需要一套独立数据时，在启动前设置绝对路径 `FLANDRE_DATA_DIR`。指定此变量时不自动导入旧项目数据。
 
@@ -51,8 +51,9 @@
 ```powershell
 .venv/Scripts/python.exe checks/check_storage.py
 .venv/Scripts/python.exe checks/check_model_selection.py
+.venv/Scripts/python.exe checks/check_personal_questions.py
 .venv/Scripts/python.exe checks/check_windows_package.py dist/FlandreNotebook/FlandreNotebook.exe
-.venv/Scripts/python.exe checks/check_windows_installer.py dist/FlandreNotebook-0.2.0-preview.1-setup-x64.exe
+.venv/Scripts/python.exe checks/check_windows_installer.py dist/FlandreNotebook-0.3.0-preview.1-setup-x64.exe
 ```
 
 - 目录迁移：临时题库验证首次复制、重复启动、旧 schema 升级、草稿与附件、缺图拒绝、复制失败、目标冲突及显式独立目录。旧数据原文件不改变。
@@ -61,7 +62,7 @@
 - 安装器：拒绝覆盖已存在的同一应用安装。安装到临时目录，运行已安装 EXE，卸载后确认测试题库和图片仍在；等待 Inno 的第二阶段卸载进程释放文件后清理临时目录。
 - `--verify-package <报告文件>` 是开发验收参数，只有提供 `FLANDRE_DATA_DIR` 时启用；使用单独的设置名称和空测试题库，不调用模型。
 
-本轮 17 项源码检查（原 15 项、目录迁移与默认模型）通过。最终构建的实际 EXE 和安装器均已再次检查：Windows 11 桌面运行、默认模型设置与任务选择、固定尺寸单选图标、静音英语合成和语速、自定义全局热键回调、公式、PDF、ZIP 恢复与结构化选择题通过；卸载后测试题库与附件保留。后续每次重新构建都需重新执行检查。
+本轮 18 项源码检查（含目录迁移、默认模型、个人字段与错题标记）通过。最终构建的实际 EXE 和安装器均已再次检查：Windows 11 桌面运行、默认模型设置与任务选择、固定尺寸单选图标、静音英语合成和语速、自定义全局热键回调、公式、PDF、ZIP 恢复与结构化选择题通过；年级和笔记往返保存、提交后展开笔记、错题标记原子记录及完整/小窗滚动通过；卸载后测试题库与附件保留。后续每次重新构建都需重新执行检查。
 
 ## 真实模型验收与限制
 

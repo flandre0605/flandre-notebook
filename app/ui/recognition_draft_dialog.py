@@ -39,6 +39,11 @@ class RecognitionDraftDialog(QDialog):
         self.explanation.setMinimumHeight(150)
         self.is_wrong = QCheckBox("标记为错题")
         self.options_editor = OptionsEditor()
+        self.grade = QLineEdit()
+        self.grade.setMaxLength(100)
+        self.grade.setPlaceholderText("例如高一、大学一年级；可留空")
+        self.notes = MathEditor()
+        self.notes.setMinimumHeight(150)
         self.is_wrong.setChecked(bool(question["is_wrong"]) if question is not None else True)
 
         self.question_selector = QComboBox()
@@ -64,6 +69,11 @@ class RecognitionDraftDialog(QDialog):
         fields.setLayout(form)
         tabs.addTab(fields, "题目内容")
         tabs.addTab(self.options_editor, "选择题选项")
+        personal = QWidget()
+        personal_form = QFormLayout(personal)
+        personal_form.addRow("年级", self.grade)
+        personal_form.addRow("个人笔记", self.notes)
+        tabs.addTab(personal, "个人整理")
         content.addWidget(tabs, 2)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -104,7 +114,8 @@ class RecognitionDraftDialog(QDialog):
         self._load_draft(0)
         self._update_progress()
         self.question_selector.currentIndexChanged.connect(self._switch_draft)
-        for field in (self.stem.source, self.subject, self.question_type, self.answer.source, self.explanation.source):
+        for field in (self.stem.source, self.subject, self.question_type, self.answer.source,
+                      self.explanation.source, self.grade, self.notes.source):
             field.textChanged.connect(lambda *_: self.content_changed.emit())
         self.is_wrong.toggled.connect(lambda *_: self.content_changed.emit())
         self.options_editor.changed.connect(self.content_changed.emit)
@@ -128,6 +139,9 @@ class RecognitionDraftDialog(QDialog):
         self.question_type.setText(draft.get("question_type", ""))
         self.answer.setPlainText(draft.get("answer", ""))
         self.explanation.setPlainText(draft.get("explanation", ""))
+        original = dict(self.question) if self.question is not None else {}
+        self.grade.setText(draft.get("grade", original.get("grade", "")))
+        self.notes.setPlainText(draft.get("notes", original.get("notes", "")))
         self.options_editor.set_options(draft.get("options", {}))
         self.is_wrong.setChecked(
             bool(draft.get("is_wrong", self.question["is_wrong"] if self.question else True))
@@ -206,6 +220,8 @@ class RecognitionDraftDialog(QDialog):
             "question_type": self.question_type.text(),
             "answer": self.answer.toPlainText(),
             "explanation": self.explanation.toPlainText(),
+            "grade": self.grade.text(),
+            "notes": self.notes.toPlainText(),
             "is_wrong": int(self.is_wrong.isChecked()),
             "options": self.options_editor.options(),
         }

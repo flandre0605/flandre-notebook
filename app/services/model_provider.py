@@ -402,7 +402,7 @@ def recognize_image(profile, image_path: str | Path) -> list[dict]:
     result = []
     for index, question in enumerate(questions, 1):
         try:
-            result.append(validate_question({**question, "is_wrong": 1}))
+            result.append(validate_question({**question, "notes": "", "is_wrong": 1}))
         except ValueError as error:
             raise ProviderError(f"第 {index} 道识题草稿格式无效：{error}。原始响应已保留。", content) from error
     return result

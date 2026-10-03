@@ -8,7 +8,7 @@ from app.paths import DATA_DIR
 
 
 DATABASE_PATH = DATA_DIR / "questions.db"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 @contextmanager
@@ -168,12 +168,19 @@ def initialize(database_path: Path | None = None) -> None:
                 unknown_days INTEGER NOT NULL CHECK(unknown_days BETWEEN 0 AND 365))""")
             connection.execute("INSERT INTO review_preferences VALUES (1, 7, 1, 0)")
             connection.execute("PRAGMA user_version = 9")
+            version = 9
+        if version < 10:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            for field in ("grade", "notes"):
+                connection.execute(f"ALTER TABLE questions ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
+            connection.execute("PRAGMA user_version = 10")
 
 
 def _question_conditions(
     search: str, subject: str, question_type: str, state: str, prefix: str = "", difficulty: str = ""
 ) -> tuple[list[str], list[str]]:
-    search_fields = ("stem", "subject", "tags", "knowledge_points", "source")
+    search_fields = ("stem", "subject", "tags", "knowledge_points", "source", "grade", "notes")
     conditions = ["(" + " OR ".join(f"{prefix}{field} LIKE ?" for field in search_fields) + ")"]
     parameters = [f"%{search}%"] * len(search_fields)
     if difficulty:
@@ -351,6 +358,7 @@ def record_attempt(
     mistake_reason: str = "",
     user_answer: str = "",
     session_state: dict | None = None,
+    is_wrong: bool | None = None,
 ) -> None:
     from datetime import datetime, timedelta, timezone
 
@@ -358,6 +366,8 @@ def record_attempt(
         raise ValueError("无效的掌握程度。")
     if result not in {"correct", "incorrect", "skipped"}:
         raise ValueError("无效的作答结果。")
+    if is_wrong is not None and type(is_wrong) is not bool:
+        raise ValueError("错题标记应为布尔值。")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     reviewed_at = now.strftime("%Y-%m-%d %H:%M:%S")
     with _connection() as connection:
@@ -387,7 +397,9 @@ def record_attempt(
                    review_count = review_state.review_count + 1""",
             (question_id, mastery, due_at, reviewed_at),
         )
-        if result == "incorrect":
+        if is_wrong is not None:
+            connection.execute("UPDATE questions SET is_wrong = ? WHERE id = ?", (int(is_wrong), question_id))
+        elif result == "incorrect":
             connection.execute("UPDATE questions SET is_wrong = 1 WHERE id = ?", (question_id,))
         if session_state is not None:
             _write_workspace(connection, "practice", session_state if session_state["index"] < len(session_state["ids"]) else None)
