@@ -1,5 +1,4 @@
 import sqlite3
-from datetime import date, timedelta
 from PySide6.QtCore import Qt
 
 from PySide6.QtWidgets import (
@@ -15,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.database import store
+from app.ui.learning_heatmap import LearningHeatmap
 
 
 class HistoryDialog(QDialog):
@@ -50,16 +50,14 @@ class HistoryDialog(QDialog):
         stats_layout.addWidget(self.summary)
         self.subject_table = QTableWidget(0, 5)
         self.subject_table.setHorizontalHeaderLabels(["学科", "已判定作答", "正确率", "跳过", "累计用时"])
-        self.daily_table = QTableWidget(7, 4)
-        self.daily_table.setHorizontalHeaderLabels(["近七天（本地日期）", "记录数", "正确", "正确率"])
-        for table in (self.subject_table, self.daily_table):
-            table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-            table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-            table.verticalHeader().hide()
-            table.setShowGrid(False)
-            table.setAlternatingRowColors(True)
+        self.heatmap = LearningHeatmap()
+        self.subject_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.subject_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.subject_table.verticalHeader().hide()
+        self.subject_table.setShowGrid(False)
+        self.subject_table.setAlternatingRowColors(True)
         stats_layout.addWidget(self.subject_table, 1)
-        stats_layout.addWidget(self.daily_table, 1)
+        stats_layout.addWidget(self.heatmap)
         self.suggestion = QLabel()
         self.suggestion.setWordWrap(True)
         self.suggestion.setTextFormat(Qt.TextFormat.PlainText)
@@ -121,12 +119,7 @@ class HistoryDialog(QDialog):
                       row["skipped"], f"{row['seconds'] // 60} 分钟")
             for column, value in enumerate(values):
                 self.subject_table.setItem(index, column, QTableWidgetItem(str(value)))
-        daily = {row["day"]: row for row in statistics["daily"]}
-        for index in range(7):
-            day = (date.today() - timedelta(days=6 - index)).isoformat()
-            row = daily.get(day, dict(attempts=0, correct=0, incorrect=0))
-            for column, value in enumerate((day, row["attempts"], row["correct"], self._accuracy(row))):
-                self.daily_table.setItem(index, column, QTableWidgetItem(str(value)))
+        self.heatmap.set_daily(statistics["daily"])
         eligible = [row for row in subjects if row["correct"] + row["incorrect"] >= 3 and row["incorrect"]]
         text = (f"可优先复习：{eligible[0]['subject'] or '未分类'}（已判定至少 3 次的学科中正确率最低）。"
                 if eligible else "再积累一些作答记录后，这里会提示可优先复习的学科。")

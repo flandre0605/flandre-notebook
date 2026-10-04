@@ -37,6 +37,7 @@ QFrame#workspaceHeader { background: #fffcfd; border-bottom: 1px solid #ecd5df; 
 QFrame#libraryPanel, QFrame#detailPanel { background: #ffffff; }
 QFrame#separator { background: #ecd5df; border: none; }
 QFrame#formCard { background: white; border: 1px solid #ecd5df; border-radius: 14px; }
+QFrame#learningHeatmap { background: white; border: 1px solid #ecd5df; border-radius: 14px; }
 QFrame#imageDropZone { background: #fffcfd; border: 2px dashed #ddb8c8; border-radius: 16px; }
 QFrame#imageDropZone[dragging="true"] { background: #fbe8f0; border-color: #b54b72; }
 QScrollArea#miniPracticeScroll { background: transparent; border: 1px solid #ecd5df; border-radius: 12px; }

@@ -516,7 +516,8 @@ def learning_statistics() -> dict:
                       SUM(result = 'correct') AS correct,
                       SUM(result = 'incorrect') AS incorrect
                FROM practice_attempts
-               WHERE date(answered_at, 'localtime') >= date('now', 'localtime', '-6 days')
+               WHERE date(answered_at, 'localtime') BETWEEN date('now', 'localtime', '-89 days')
+                                                      AND date('now', 'localtime')
                GROUP BY day ORDER BY day"""
         )]
         reasons = [dict(row) for row in connection.execute(

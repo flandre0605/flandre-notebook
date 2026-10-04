@@ -5,9 +5,10 @@ from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 root = Path(SPECPATH).parent
 assets = root / "assets"
 data = [(str(assets / name), "assets") for name in (
-    "flandre_icon.ico", "flandre_icon.png", "question_template.csv",
+    "flandre_icon.ico", "flandre_icon.png", "flandre_pet_chibi.png", "question_template.csv",
     "vocabulary_template.csv", "vocabulary_template.txt")]
 data += [(str(assets / "ui"), "assets/ui")]
+data += [(str(assets / "pet_expressions"), "assets/pet_expressions")]
 data += collect_data_files("ziamath") + collect_data_files("ziafont") + collect_data_files("latex2mathml")
 for distribution in ("keyring", "PySide6", "PySide6_Essentials", "PySide6_Addons", "ziamath"):
     data += copy_metadata(distribution, recursive=True)

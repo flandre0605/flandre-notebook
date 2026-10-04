@@ -24,9 +24,12 @@ def verify_package(app, window, report_path):
         if not os.environ.get("FLANDRE_DATA_DIR") or store.list_questions() or store.list_profiles():
             raise ValueError("Runtime verification requires a new FLANDRE_DATA_DIR workspace.")
         root = store.DATA_DIR
-        for resource in ("flandre_icon.png", "flandre_icon.ico", "ui", "question_template.csv",
+        for resource in ("flandre_icon.png", "flandre_icon.ico", "flandre_pet_chibi.png", "ui", "question_template.csv",
                          "vocabulary_template.csv", "vocabulary_template.txt"):
             assert (PROJECT_ROOT / "assets" / resource).exists(), resource
+        for expression in ("happy", "thinking", "sad", "sleepy", "surprised"):
+            sprite = QImage(str(PROJECT_ROOT / "assets" / "pet_expressions" / f"{expression}.png"))
+            assert not sprite.isNull() and sprite.hasAlphaChannel(), expression
         credentials._require_secure_backend()  # Discover the backend without reading or writing a credential.
         report["credential_backend"] = type(credentials.keyring.get_keyring()).__name__
         from app.ui.profiles_dialog import ProfilesDialog
