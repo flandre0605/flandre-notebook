@@ -20,7 +20,29 @@ def check():
     else:
         raise AssertionError("Accepted incomplete batch")
     malformed = r'{"questions":[{"stem":"$\lim_{x\to0}x$","answer":"0"}]}'
+    markdown = (Path(__file__).parent / 'fixtures/recognition_limit_markdown.md').read_text(encoding='utf-8')
+    local = provider.parse_recognition_text(markdown)
+    assert len(local) == 1 and local.raw_response == markdown
+    assert r'\sqrt{x-a}' in local[0]['stem'] and r'\begin{cases}' in local[0]['answer']
+    assert r'+\infty' in local[0]['answer'] and '当 $a = 0$ 时' in local[0]['explanation']
+    assert local[0]['notes'] == '' and local[0]['subject'] == '' and local[0]['is_wrong'] == 1
+    assert local[0]['explanation'] == markdown.split('**解答：**', 1)[1].strip()
+    # Explicit headings cannot justify silently accepting one part of a batch.
+    for unsupported in (markdown + '\n**题目：**第二道题\n**答案：**1',
+                        markdown.replace('只有一道题目', '有两道题目'),
+                        markdown.replace('**题目：**', '**题目 1：**'),
+                        markdown.rsplit('$$', 1)[0],
+                        markdown.replace(r'\end{cases}', ''), 'Unknown upstream failure'):
+        try:
+            provider.parse_recognition_text(unsupported)
+        except provider.ProviderError:
+            pass
+        else:
+            raise AssertionError('Accepted ambiguous or truncated text')
     with patch.object(provider, "_image_for_request", return_value=("image/png", "mock")):
+        with patch.object(provider, '_request', return_value=markdown) as request:
+            result = provider.recognize_image({}, 'unused.png')
+            assert len(result) == 1 and result == local and request.call_count == 1
         with patch.object(provider, "_request", side_effect=[malformed, valid]) as request:
             result = provider.recognize_image({}, "unused.png")
             assert result[0]["stem"] == question["stem"] and request.call_count == 2

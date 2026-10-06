@@ -283,9 +283,13 @@ class QuestionDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, cloud_session=None, cloud_root=None):
         super().__init__()
-        self.setWindowTitle("AI 错题本")
+        self.cloud_session = cloud_session
+        self.cloud_root = Path(cloud_root) if cloud_root is not None else store.DATA_DIR
+        self.cloud_directory = store.DATA_DIR
+        self._cloud_dialog = None
+        self.setWindowTitle("AI 错题本" + (f" · {cloud_session.username}" if cloud_session else ""))
         self.resize(1280, 820)
         self.setMinimumSize(1040, 680)
         self.setAcceptDrops(True)
@@ -356,6 +360,8 @@ class MainWindow(QMainWindow):
         section_label.setObjectName("sectionCaption")
         sidebar_layout.addWidget(section_label)
         add_nav("设置", self.manage_profiles, "M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M8 15v6", page_key="settings", utility=True)
+        add_nav("账号与同步", self.manage_cloud, "M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8 M4 21a8 8 0 0 1 16 0", utility=True)
+        add_nav("手机待整理", self.open_mobile_inbox, "M7 2h10v20H7z M10 18h4", utility=True)
         add_nav("备份数据", self.create_backup, "M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5", utility=True)
         add_nav("恢复备份", self.restore_backup, "M3 10a9 9 0 1 1 1 8 M3 4v6h6", utility=True)
         sidebar_layout.addStretch()
@@ -363,9 +369,10 @@ class MainWindow(QMainWindow):
         local_badge = QFrame()
         local_layout = QVBoxLayout(local_badge)
         local_layout.setContentsMargins(10, 10, 10, 0)
-        local_title = QLabel("●  本地空间")
+        local_title = QLabel(f"●  {cloud_session.username}" if cloud_session else "●  本地空间")
         local_title.setStyleSheet("color:#31815d;font-size:11px;font-weight:700;")
-        local_caption = QLabel("题库数据保存在此设备")
+        local_caption = QLabel("独立账号题库 · 可手动同步" if cloud_session else "题库数据保存在此设备")
+        local_caption.setWordWrap(True)
         local_caption.setObjectName("muted")
         local_layout.addWidget(local_title)
         local_layout.addWidget(local_caption)
@@ -943,6 +950,13 @@ class MainWindow(QMainWindow):
         return notes_saved
 
     def closeEvent(self, event):
+        if self._cloud_dialog is not None and (
+            self._cloud_dialog.worker is not None or
+            any(getattr(child, 'worker', None) is not None for child in self._cloud_dialog.children())
+        ):
+            self.statusBar().showMessage('同步或导入正在进行，请结束后再关闭。')
+            event.ignore()
+            return
         if not self._save_workspaces():
             event.ignore()
             return
@@ -1514,6 +1528,23 @@ class MainWindow(QMainWindow):
             )
         self._show_page("settings")
 
+    def manage_cloud(self):
+        from app.ui.cloud_account_dialog import CloudAccountDialog
+        dialog = CloudAccountDialog(self)
+        self._cloud_dialog = dialog
+        dialog.exec()
+        self._cloud_dialog = None
+
+    def open_mobile_inbox(self):
+        if self.cloud_session is None:
+            QMessageBox.information(self, '手机待整理', '请先通过“账号与同步”登录与手机相同的账号，再接收照片。')
+            return
+        from app.ui.mobile_inbox_dialog import MobileInboxDialog
+        dialog = MobileInboxDialog(self)
+        self._cloud_dialog = dialog
+        dialog.exec()
+        self._cloud_dialog = None
+
     def create_backup(self):
         default_path = store.DATA_DIR / "错题本备份.zip"
         path, _ = QFileDialog.getSaveFileName(
@@ -1538,6 +1569,11 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "备份完成", f"题库和图片已备份到：\n{destination}")
 
     def restore_backup(self):
+        if self.cloud_session is not None:
+            QMessageBox.information(self, '账号题库恢复',
+                '请在本地学习空间恢复备份，再通过“账号与同步 → 导入原来的本地题库”复制题目。\n'
+                '账号题库保留云端版本和删除记录，避免整库覆盖后重新发布已删除内容。')
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "选择题库备份", str(store.DATA_DIR), "错题本备份 (*.zip)"
         )

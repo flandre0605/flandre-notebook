@@ -34,4 +34,7 @@ QUESTION_RECOGNITION_SYSTEM = r"""
 QUESTION_RECOGNITION_USER = (
     "请按系统要求识别图片中的所有独立题目，按顺序分别整理并解答。先判断题目边界，"
     "同一题号的材料、小问和选项保持在同一道题中；多个题目不要合并。"
+    '只返回合法 JSON：{"questions":[{"stem":"题干","subject":"学科",'
+    '"question_type":"题型","options":{},"answer":"答案","explanation":"解析"}]}。'
+    '不要输出 Markdown 解答或 JSON 以外的文字；公式反斜杠按 JSON 规则转义。'
 )

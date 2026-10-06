@@ -26,6 +26,13 @@ class ProviderError(RuntimeError):
         self.retry_without_json_mode = retry_without_json_mode
 
 
+class RecognitionQuestions(list):
+    """Keep the original text alongside editable drafts until human confirmation."""
+    def __init__(self, questions, raw_response):
+        super().__init__(questions)
+        self.raw_response = raw_response
+
+
 def _content_text(content) -> str:
     if isinstance(content, str):
         return content.strip()
@@ -301,6 +308,68 @@ def _parse_json_content(content: str) -> dict | list:
     raise json.JSONDecodeError("No valid JSON object or array", candidate, 0)
 
 
+def _parse_single_text_question(content):
+    # Only explicit single-question sections; never salvage part of a batch.
+    labels = '题目|题干|标准答案|最终答案|答案|解答|解析|综上所述|结论'
+    heading = re.compile(r'^[ \t]*(?:#{1,6}[ \t]+)?(?:\*\*|__)?(' + labels +
+        r')[ \t]*[：:][ \t]*(?:\*\*|__)?[ \t]*', re.MULTILINE)
+    sections = list(heading.finditer(content))
+    questions = [section for section in sections if section[1] in ('题目', '题干')]
+    solutions = [section for section in sections if section[1] in ('解答', '解析')]
+    answers = [section for section in sections if section[1] in ('答案', '标准答案', '最终答案', '综上所述', '结论')]
+    if len(questions) != 1 or len(solutions) != 1 or not answers:
+        return None
+    start = questions[0]
+    if solutions[0].start() <= start.start() or any(section.start() <= start.start() for section in answers):
+        return None
+    if (re.search(r'^[ \t]*(?:#{1,6}[ \t]+)?(?:\*\*|__)?(?:题目|题干)[ \t]*[0-9一二三四五六七八九十]', content, re.MULTILINE)
+            or re.search(r'(?:[2-9][0-9]*|[二三四五六七八九十两])[ \t]*道题', content[:start.start()])):
+        return None
+    # A cut-off displayed formula is not a complete draft.
+    if content.count('$$') % 2 or len(re.findall(r'(?<!\\)\$', content.replace('$$', ''))) % 2:
+        return None
+    environments = []
+    for token in re.finditer(r'\\(begin|end)\{([^{}]+)\}', content):
+        if token[1] == 'begin':
+            environments.append(token[2])
+        elif not environments or environments.pop() != token[2]:
+            return None
+    if environments:
+        return None
+    def body(section):
+        end = next((other.start() for other in sections if other.start() > section.start()), len(content))
+        return content[section.end():end].strip()
+    stem = body(start)
+    explicit = [section for section in answers if section[1] in ('答案', '标准答案', '最终答案')]
+    answer = body(explicit[0] if explicit else answers[-1])
+    explanation = content[solutions[0].end():].strip()
+    if not stem or not answer or not explanation:
+        return None
+    return {'questions': [dict(stem=stem, answer=answer, explanation=explanation, options={})]}
+
+
+def _parse_question_content(content):
+    try:
+        return _parse_json_content(content)
+    except json.JSONDecodeError:
+        if not re.search(r'"stem"\s*:', content):
+            draft = _parse_single_text_question(content)
+            if draft is not None:
+                return draft
+        raise
+
+
+def parse_recognition_text(content):
+    """Convert existing text locally, with no provider request or automatic import."""
+    if not isinstance(content, str) or not content.strip() or len(content) > 128000:
+        raise ProviderError('请提供不超过 128000 字的题目响应。')
+    try:
+        draft = _parse_question_content(content)
+    except json.JSONDecodeError:
+        raise ProviderError('文字没有明确的单题题目、解答和答案边界，或格式不完整。请保留原文并手动录入。', content) from None
+    return _validated_recognition_questions(draft, content)
+
+
 def _image_for_request(image_path: Path, mime_type: str) -> tuple[str, str]:
     reader = QImageReader(str(image_path))
     size = reader.size()
@@ -355,7 +424,7 @@ def recognize_image(profile, image_path: str | Path) -> list[dict]:
             raise
         content = _request(profile, messages, max_tokens=6000, json_mode=False)
     try:
-        draft = _parse_json_content(content)
+        draft = _parse_question_content(content)
     except json.JSONDecodeError:
         # ponytail: one formatting retry only; do not invent missing/truncated questions.
         if not re.search(r'"stem"\s*:', content):
@@ -377,13 +446,17 @@ def recognize_image(profile, image_path: str | Path) -> list[dict]:
         repaired = ""
         try:
             repaired = _request(profile, repair_messages, max_tokens=6000)
-            draft = _parse_json_content(repaired)
+            draft = _parse_question_content(repaired)
         except (ProviderError, json.JSONDecodeError) as error:
             raise ProviderError(
                 "模型输出格式有误，自动整理未成功。可查看原始响应后重试或更换模型。",
                 f"首次响应：\n{content}\n\n整理失败：{error}\n{repaired or getattr(error, 'raw_response', '')}",
             ) from None
         content = f"首次响应：\n{content}\n\n整理响应：\n{repaired}"
+    return _validated_recognition_questions(draft, content)
+
+
+def _validated_recognition_questions(draft, content):
     if isinstance(draft, dict) and isinstance(draft.get("questions"), list):
         questions = draft["questions"]
     elif isinstance(draft, dict) and isinstance(draft.get("stem"), str):
@@ -405,4 +478,4 @@ def recognize_image(profile, image_path: str | Path) -> list[dict]:
             result.append(validate_question({**question, "notes": "", "is_wrong": 1}))
         except ValueError as error:
             raise ProviderError(f"第 {index} 道识题草稿格式无效：{error}。原始响应已保留。", content) from error
-    return result
+    return RecognitionQuestions(result, content)

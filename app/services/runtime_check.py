@@ -24,6 +24,18 @@ def verify_package(app, window, report_path):
         if not os.environ.get("FLANDRE_DATA_DIR") or store.list_questions() or store.list_profiles():
             raise ValueError("Runtime verification requires a new FLANDRE_DATA_DIR workspace.")
         root = store.DATA_DIR
+        for script in ('004_desktop_sync.sql','005_mobile_inbox.sql'):
+            assert (PROJECT_ROOT / 'cloud/sql' / script).is_file(), script
+        from app.ui.mobile_inbox_dialog import MobileInboxDialog
+        from app.services.cloud_sync import CloudSession
+        previous_session = window.cloud_session
+        window.cloud_session = CloudSession(dict(user_id='package-check',access_token='memory-only',expires_in=60),'check')
+        inbox = MobileInboxDialog(window)
+        assert inbox.list.count() == 0
+        inbox.close()
+        window.cloud_session.close()
+        window.cloud_session = previous_session
+        report['mobile_inbox_and_deployment_scripts'] = True
         for resource in ("flandre_icon.png", "flandre_icon.ico", "flandre_pet_chibi.png", "ui", "question_template.csv",
                          "vocabulary_template.csv", "vocabulary_template.txt"):
             assert (PROJECT_ROOT / "assets" / resource).exists(), resource

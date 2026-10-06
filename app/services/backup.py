@@ -19,23 +19,30 @@ from app.services import recognition_drafts
 MAX_BACKUP_BYTES = 5 * 1024 * 1024 * 1024
 
 
-def create_backup(destination: str | Path) -> Path:
+def create_backup(destination: str | Path, data_dir: Path | None = None) -> Path:
+    database_path = Path(data_dir) / 'questions.db' if data_dir is not None else store.DATABASE_PATH
+    images_root = Path(data_dir) / 'attachments' if data_dir is not None else ATTACHMENTS_DIR
+    if not database_path.is_file():
+        raise ValueError('需要备份的题库不存在。')
+    if images_root.exists() and (not images_root.resolve().is_relative_to(database_path.parent.resolve()) or any(
+            file.is_symlink() or not file.resolve().is_relative_to(images_root.resolve()) for file in images_root.rglob('*'))):
+        raise ValueError('图片目录包含外部链接，未备份，请先整理目录。')
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="mistakebook-backup-") as temporary:
         database_copy = Path(temporary) / "questions.db"
-        with closing(sqlite3.connect(store.DATABASE_PATH)) as source, closing(
+        with closing(sqlite3.connect(database_path.resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(
             sqlite3.connect(database_copy)
         ) as target:
             source.backup(target)
         with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
             archive.write(database_copy, "database.sqlite3")
-            if ATTACHMENTS_DIR.exists():
-                for file in ATTACHMENTS_DIR.rglob("*"):
+            if images_root.exists():
+                for file in images_root.rglob("*"):
                     if file.is_file():
                         archive.write(
                             file,
-                            f"attachments/{file.relative_to(ATTACHMENTS_DIR).as_posix()}",
+                            f"attachments/{file.relative_to(images_root).as_posix()}",
                         )
             archive.writestr(
                 "manifest.json",

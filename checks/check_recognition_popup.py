@@ -15,7 +15,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from app.database import store
-from app.services import attachments
+from app.services import attachments, recognition_drafts
 from app.services.model_provider import ProviderError
 from app.ui.main_window import MainWindow
 
@@ -38,7 +38,7 @@ def check():
         root = Path(directory)
         database = root / "questions.db"
         store.initialize(database)
-        with patch.object(store, "_connection", lambda: connection(database)), patch.object(
+        with patch.object(store, "_connection", lambda path=None: connection(path or database)), patch.object(
             store, "DATA_DIR", root
         ), patch.object(attachments, "ATTACHMENTS_DIR", root / "attachments"), patch(
             "app.ui.main_window.GlobalScreenshotHotkey"
@@ -124,11 +124,35 @@ def check():
                 assert not any(key.startswith("recognition") for key in window._pages)
                 popup.reject()
                 assert not window._recognition_dialogs and len(store.list_questions()) == 2
+            markdown = (Path(__file__).parent / 'fixtures/recognition_limit_markdown.md').read_text(encoding='utf-8')
+            with patch('app.ui.image_recognition_dialog.recognize_image', side_effect=ProviderError('旧格式响应', markdown)) as request:
+                popup = window.start_image_recognition(external, auto_recognize=True)
+                wait_until(lambda: '旧格式响应' in popup.status.text())
+                key = popup.session_key
+                assert recognition_drafts.load(key)[0]['raw_response'] == markdown
+                popup.close()
+                popup = window.start_image_recognition(resume_key=key)
+                assert popup.response_details.toPlainText() == markdown and request.call_count == 1
+                popup.recover_text_button.click()
+                assert popup.draft_editor is not None and len(popup.draft_editor.values()) == 1
+                assert request.call_count == 1 and len(store.list_questions()) == 2
+                assert r'\begin{cases}' in popup.draft_editor.values()[0]['answer']
+                state, original = recognition_drafts.load(key)
+                assert state['raw_response'] == markdown and original.exists()
+                popup.draft_editor._accept_if_valid()
+                assert len(store.list_questions()) == 3 and not original.exists()
+                assert external.exists() and request.call_count == 1
+            # A response from one image must not be reused after choosing another.
+            popup = window.start_image_recognition(external)
+            popup.response_details.setPlainText(markdown)
+            popup.set_image(str(external))
+            assert not popup.response_details.toPlainText()
+            popup.close()
             popup = window.start_image_recognition(external)
             window.close()
             assert not popup.isVisible() and not window._recognition_dialogs
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    print("PASS: screenshot popup, unchanged page, multi-question save, source cleanup, late results ignored, failure retry, shutdown")
+    print("PASS: screenshot popup, multi-question save, late-result protection, stored response/restart/local recovery, original-image import and shutdown")
 
 
 if __name__ == "__main__":

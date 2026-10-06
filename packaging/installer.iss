@@ -1,5 +1,5 @@
 #ifndef AppVersion
-  #define AppVersion "0.3.0-preview.1"
+  #define AppVersion "0.4.0-preview.1"
 #endif
 #ifndef BundleDir
   #define BundleDir "..\dist\FlandreNotebook"

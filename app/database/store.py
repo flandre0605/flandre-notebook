@@ -8,7 +8,7 @@ from app.paths import DATA_DIR
 
 
 DATABASE_PATH = DATA_DIR / "questions.db"
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12
 
 
 @contextmanager
@@ -29,6 +29,17 @@ def _connection(database_path: Path | None = None) -> Iterator[sqlite3.Connectio
 
 
 def initialize(database_path: Path | None = None) -> None:
+    target = Path(database_path) if database_path is not None else DATABASE_PATH
+    if target.is_file():
+        # Preserve an ordered pre-upgrade snapshot; never overwrite an old backup.
+        from contextlib import closing
+        from uuid import uuid4
+        with closing(sqlite3.connect(target)) as source:
+            old_version = source.execute("PRAGMA user_version").fetchone()[0]
+            if 0 < old_version < SCHEMA_VERSION:
+                snapshot = target.with_name(f"pre-schema-v{old_version}-{uuid4().hex[:8]}.db")
+                with closing(sqlite3.connect(snapshot)) as copy:
+                    source.backup(copy)
     with _connection(database_path) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
         if version > SCHEMA_VERSION:
@@ -175,6 +186,25 @@ def initialize(database_path: Path | None = None) -> None:
             for field in ("grade", "notes"):
                 connection.execute(f"ALTER TABLE questions ADD COLUMN {field} TEXT NOT NULL DEFAULT ''")
             connection.execute("PRAGMA user_version = 10")
+            version = 10
+        if version < 11:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            from app.database.sync_schema import install
+            install(connection)
+            connection.execute("PRAGMA user_version = 11")
+            version = 11
+        if version < 12:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            connection.execute("""CREATE TABLE mobile_inbox (
+                id TEXT PRIMARY KEY, seq INTEGER NOT NULL, status TEXT NOT NULL,
+                payload TEXT NOT NULL, recognition_key TEXT UNIQUE,
+                local_done INTEGER NOT NULL DEFAULT 0 CHECK(local_done IN (0,1)),
+                needs_ack INTEGER NOT NULL DEFAULT 0 CHECK(needs_ack IN (0,1)))""")
+            connection.execute("""CREATE TABLE mobile_inbox_drafts (
+                key TEXT PRIMARY KEY, inbox_id TEXT NOT NULL REFERENCES mobile_inbox(id) ON DELETE CASCADE)""")
+            connection.execute("PRAGMA user_version = 12")
 
 
 def _question_conditions(
@@ -298,15 +328,24 @@ def save_recognized_questions(questions, images, workspace_key=None):
         raise ValueError("识题数量或原图关联无效。")
     ids = []
     with _connection() as connection:
+        receipt = connection.execute('SELECT status,local_done FROM mobile_inbox WHERE id='
+                                     '(SELECT inbox_id FROM mobile_inbox_drafts WHERE key=?)', (workspace_key,)).fetchone()
+        if receipt and (receipt['local_done'] or receipt['status'] != 'pending'):
+            raise ValueError('这张手机图片已处理，未重复收录。')
         for question, image in zip(values, images):
             cursor = connection.execute(
                 f"INSERT INTO questions ({', '.join(QUESTION_FIELDS)}) VALUES ({', '.join('?' for _ in QUESTION_FIELDS)})", question)
             question_id = int(cursor.lastrowid)
-            connection.execute(
-                "INSERT INTO attachments (question_id, relative_path, original_name, mime_type) VALUES (?, ?, ?, ?)",
-                (question_id, image["relative_path"], image["original_name"], image["mime_type"]))
+            for entry in (image if isinstance(image, list) else [image]):
+                connection.execute(
+                    "INSERT INTO attachments (question_id, relative_path, original_name, mime_type) VALUES (?, ?, ?, ?)",
+                    (question_id, entry["relative_path"], entry["original_name"], entry["mime_type"]))
             ids.append(question_id)
         if workspace_key:
+            # Commit receipt completion with the questions. A lost cloud reply
+            # must never cause the same phone photo to be imported again.
+            connection.execute("UPDATE mobile_inbox SET local_done=1,needs_ack=1 "
+                               "WHERE id=(SELECT inbox_id FROM mobile_inbox_drafts WHERE key=?) AND local_done=0", (workspace_key,))
             _write_workspace(connection, workspace_key, None)
     return ids
 

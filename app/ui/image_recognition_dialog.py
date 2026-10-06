@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from app.database import store
 from app.services import attachments
 from app.services import recognition_drafts
-from app.services.model_provider import recognize_image
+from app.services.model_provider import ProviderError, parse_recognition_text, recognize_image
 from app.ui.recognition_draft_dialog import RecognitionDraftDialog
 from app.ui.worker import Worker
 from app.ui.motion import AnimatedButton, ContentFade
@@ -150,6 +150,9 @@ class ImageRecognitionDialog(QDialog):
         self.details_button = AnimatedButton("查看原始响应")
         self.details_button.hide()
         self.details_button.clicked.connect(self._toggle_details)
+        self.recover_text_button = AnimatedButton('从文字响应恢复草稿')
+        self.recover_text_button.setEnabled(False)
+        self.recover_text_button.clicked.connect(self.recover_text)
         self.continue_draft = AnimatedButton("继续核对已保存草稿")
         self.continue_draft.clicked.connect(self._continue_draft)
         self.continue_draft.hide()
@@ -170,7 +173,10 @@ class ImageRecognitionDialog(QDialog):
         input_layout.addWidget(subtitle)
         input_layout.addWidget(self.drop_zone, 1)
         input_layout.addWidget(self.status)
-        input_layout.addWidget(self.details_button)
+        response_actions = QHBoxLayout()
+        response_actions.addWidget(self.details_button)
+        response_actions.addWidget(self.recover_text_button)
+        input_layout.addLayout(response_actions)
         input_layout.addWidget(self.response_details)
         input_layout.addWidget(self.continue_draft)
         input_layout.addLayout(actions)
@@ -254,6 +260,11 @@ class ImageRecognitionDialog(QDialog):
         self.discard_button.setEnabled(False)
         self._refresh_sessions()
         self.image_path = None
+        self.response_details.clear()
+        self.response_details.hide()
+        self.details_button.hide()
+        self.details_button.setText('查看原始响应')
+        self.recover_text_button.setEnabled(False)
         self.recognize_button.setEnabled(False)
         self.drop_zone.clear_image()
         try:
@@ -264,6 +275,7 @@ class ImageRecognitionDialog(QDialog):
         self.drop_zone.set_image(self.image_path)
         self.status.setText(f"已选择：{self.image_path.name}")
         self.recognize_button.setEnabled(bool(self.profiles))
+        self.recover_text_button.setEnabled(True)
 
     def recognize(self):
         if self._recognizing or self._dismissed or self.views.currentWidget() is not self.input_page:
@@ -281,7 +293,7 @@ class ImageRecognitionDialog(QDialog):
         try:
             if self.session_key is None or (self._draft_state or {}).get("drafts"):
                 # Re-recognition is a new task: never replace a user's reviewed draft or local notes.
-                self.session_key, self._draft_state, self.image_path = recognition_drafts.create(self.image_path, profile_id)
+                self._create_session(profile_id)
             self._draft_state["profile_id"] = profile_id
             self.save_progress()
             self._refresh_sessions()
@@ -307,12 +319,16 @@ class ImageRecognitionDialog(QDialog):
             return
         try:
             if self.session_key is None:
-                self.session_key, self._draft_state, self.image_path = recognition_drafts.create(self.image_path, self.profile.currentData())
-            self._draft_state.update(drafts=draft, current_index=0)
+                self._create_session(self.profile.currentData())
+            self._draft_state.update(drafts=list(draft), current_index=0)
+            if hasattr(draft, 'raw_response'):
+                self._draft_state['raw_response'] = draft.raw_response
             recognition_drafts.save(self.session_key, self._draft_state)
         except (OSError, ValueError, sqlite3.Error) as error:
             self.draft_status.setText(f"识题草稿保存失败：{error}。请保留窗口并及时收录。")
         self._set_input_enabled(True)
+        self.response_details.setPlainText(getattr(draft, 'raw_response', (self._draft_state or {}).get('raw_response', '')))
+        self.details_button.setVisible(bool(self.response_details.toPlainText()))
         self.status.setText("识别完成 · 请核对草稿")
         editor = RecognitionDraftDialog(None, self.image_path, draft, self)
         editor.setWindowFlags(Qt.WindowType.Widget)
@@ -342,7 +358,10 @@ class ImageRecognitionDialog(QDialog):
         if self._dismissed or self.draft_editor is not editor:
             return
         try:
-            question_ids = attachments.import_recognized_questions(editor.values(), self.image_path, self.session_key)
+            from app.services.mobile_inbox import InboxStore
+            original = InboxStore(store.DATA_DIR, '').original_for_draft(self.session_key)
+            question_ids = attachments.import_recognized_questions(editor.values(), self.image_path, self.session_key,
+                                                                   [original] if original else [])
         except Exception as error:
             editor.validation_status.setText(f"收录失败：{error}。本次未写入题目，草稿保留。")
             self.status.setToolTip(str(error))
@@ -366,11 +385,49 @@ class ImageRecognitionDialog(QDialog):
         self._set_input_enabled(True)
         self.status.setText(f"识题失败：{error}")
         details = getattr(error, "raw_response", "")
+        if self._draft_state is not None:
+            self._draft_state['raw_response'] = details
+            self.save_progress()
         self.status.setToolTip(details or str(error))
         self.response_details.setPlainText(details)
         self.response_details.hide()
         self.details_button.setText("查看原始响应")
         self.details_button.setVisible(bool(details))
+
+    def recover_text(self):
+        if self._recognizing or self.image_path is None:
+            self.status.setText('请先选择原题图片，再整理已有文字。')
+            return
+        content = self.response_details.toPlainText()
+        if not content:
+            from PySide6.QtWidgets import QInputDialog
+            content, accepted = QInputDialog.getMultiLineText(self, '恢复题目文字',
+                '粘贴已有的完整 JSON，或带“题目、解答、答案/结论”的单题文字。这里只在本机整理，不发送模型请求。',
+                QApplication.clipboard().text())
+            if not accepted:
+                return
+        try:
+            if self.session_key is None or (self._draft_state or {}).get('drafts'):
+                self._create_session(self.profile.currentData())
+            draft = parse_recognition_text(content)
+            self._recognized(draft)
+            self.status.setText('已从文字恢复 · 请核对题干、答案与学科，确认后收录。')
+        except (ProviderError, OSError, ValueError, sqlite3.Error) as error:
+            self._failed(error)
+
+    def _create_session(self, profile_id):
+        from app.services.mobile_inbox import link_replacement_draft
+        previous = self.session_key
+        key, state, path = recognition_drafts.create(self.image_path, profile_id)
+        try:
+            link_replacement_draft(previous, key)
+            if previous and self._draft_state:
+                state['source_name'] = self._draft_state.get('source_name',state['source_name'])
+                recognition_drafts.save(key,state)
+        except Exception:
+            recognition_drafts.discard(key,state)
+            raise
+        self.session_key, self._draft_state, self.image_path = key, state, path
 
     def _toggle_details(self):
         visible = self.response_details.isHidden()
@@ -382,6 +439,7 @@ class ImageRecognitionDialog(QDialog):
         self.choose_button.setEnabled(enabled)
         self.paste_button.setEnabled(enabled)
         self.profile.setEnabled(enabled and bool(self.profiles))
+        self.recover_text_button.setEnabled(enabled and self.image_path is not None)
         self.drop_zone.setAcceptDrops(enabled)
         self.sessions.setEnabled(enabled)
         self.discard_button.setEnabled(enabled and self.session_key is not None)
@@ -424,6 +482,9 @@ class ImageRecognitionDialog(QDialog):
         if self.draft_editor is not None:
             self._return_to_input(self.draft_editor)
         self.session_key, self._draft_state, self.image_path = key, state, path
+        self.response_details.setPlainText(state.get('raw_response', ''))
+        self.details_button.setVisible(bool(state.get('raw_response')))
+        self.recover_text_button.setEnabled(True)
         self.drop_zone.set_image(path)
         self.profile.setCurrentIndex(max(0, self.profile.findData(state["profile_id"])))
         self.status.setText("已恢复上次图片；点击开始识题才会发送请求。")

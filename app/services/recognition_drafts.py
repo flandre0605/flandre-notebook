@@ -34,8 +34,12 @@ def validate_state(key, state, root=None):
         raise ValueError("识题草稿位置无效。")
     if any(not isinstance(state.get(key, ""), str) or len(state.get(key, "")) > 260 for key in ("profile_id", "source_name")):
         raise ValueError("识题草稿配置信息无效。")
+    response = state.get('raw_response', '')
+    if not isinstance(response, str) or len(response) > 128000:
+        raise ValueError('识题原始响应应为不超过 128000 字的文本。')
     return dict(image=state["image"], drafts=[validate_question(row, draft=True) for row in drafts],
-                current_index=index, profile_id=state.get("profile_id", ""), source_name=state.get("source_name", "图片"))
+                current_index=index, profile_id=state.get("profile_id", ""), source_name=state.get("source_name", "图片"),
+                raw_response=response)
 
 
 def keys():
@@ -47,7 +51,7 @@ def create(source, profile_id):
     identity = uuid4().hex
     key = f"recognition:{identity}"
     state = dict(image=f"attachments/drafts/{identity}{source.suffix.lower()}", drafts=[],
-                 current_index=0, profile_id=profile_id or "", source_name=source.name)
+                 current_index=0, profile_id=profile_id or "", source_name=source.name, raw_response='')
     path = image_file(key, state)
     path.parent.mkdir(parents=True, exist_ok=True)
     try:

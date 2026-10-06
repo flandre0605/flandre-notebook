@@ -51,6 +51,10 @@ def check():
         old = root / "v9.db"
         store.initialize(old)
         with connection(old) as db:
+            for name, in db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'sync_%'").fetchall():
+                db.execute(f'DROP TRIGGER "{name}"')
+            for table in ('mobile_inbox_drafts', 'mobile_inbox', 'sync_outbox', 'sync_imports', 'sync_attachments', 'sync_entities', 'sync_state'):
+                db.execute(f'DROP TABLE {table}')
             db.execute("INSERT INTO questions(stem,answer) VALUES('v9 original','42')")
             db.execute("ALTER TABLE questions DROP COLUMN grade")
             db.execute("ALTER TABLE questions DROP COLUMN notes")
@@ -58,12 +62,16 @@ def check():
         before = old.read_bytes()
         store.initialize(old)
         with connection(old) as db:
-            assert db.execute("PRAGMA user_version").fetchone()[0] == 10
+            assert db.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION
             assert db.execute("SELECT stem,answer,grade,notes FROM questions").fetchone()[:] == ("v9 original", "42", "", "")
         # Upgrade errors roll back added fields and the version.
         broken = root / "broken.db"
         store.initialize(broken)
         with connection(broken) as db:
+            for name, in db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'sync_%'").fetchall():
+                db.execute(f'DROP TRIGGER "{name}"')
+            for table in ('mobile_inbox_drafts', 'mobile_inbox', 'sync_outbox', 'sync_imports', 'sync_attachments', 'sync_entities', 'sync_state'):
+                db.execute(f'DROP TABLE {table}')
             db.execute("ALTER TABLE questions DROP COLUMN grade")
             db.execute("PRAGMA user_version=9")
         rejects(lambda: store.initialize(broken))

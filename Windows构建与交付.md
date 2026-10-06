@@ -1,5 +1,13 @@
 # Windows 构建与交付
 
+更新：2026-10-07。新交付为 `0.4.0-preview.1` 免安装 ZIP，位于 `dist/0.4.0-preview.1/`，约 72.4 MiB。完整解压后运行 `FlandreNotebook/FlandreNotebook.exe`；无需外部 Python。包含桌宠/热力图、个人笔记编辑、文字识题恢复、账号同步及手机待整理，schema v12；旧数据库升级前自动保存快照。当前轮未生成新版安装向导 EXE，旧 0.3.0 包保持原样。
+
+新实际 EXE 已在项目外的临时空数据目录运行通过：资源、004/005 复制入口、手机待整理窗口、系统凭据后端、模型选择、数学公式/PDF、个人字段、练习记录、ZIP 备份恢复及静音英语发音检查。该检查不访问实际云端，也不代替 Windows 10 或手机闭环验收。手机使用、005 部署顺序和限制见 [安卓说明](android/README.md)。本轮交付与源码对应 [GitHub v0.4.0 预览版](https://github.com/flandre0605/flandre-notebook/releases/tag/v0.4.0-preview.1)。
+
+构建命令仍是 `.venv/Scripts/python.exe scripts/build_windows.py`，输出改为按版本分目录，以保留旧产物。可用 `--iscc <ISCC.exe>` 额外构建安装向导；未找到编译器时只生成免安装包。摘要保存在版本目录的 `SHA256SUMS.txt`，环境与应用源码摘要在 `FlandreNotebook/build-info.json`。
+
+## 0.3.0 交付历史（以下验收限于旧版）
+
 更新：2026-10-03。本地交付版本 `0.3.0-preview.1`；尚未发布这个版本到 GitHub。
 
 之后的源码新增了题库详情直接编辑个人笔记；本次未重新打包或运行测试。下述运行、安装和文件摘要验收对应已经构建的 0.3.0 包，尚不覆盖这项源码交互修改。

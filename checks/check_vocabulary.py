@@ -42,6 +42,10 @@ def check(preview_directory=None):
         database = root / "questions.db"
         store.initialize(database)
         with connection(database) as db:
+            for name, in db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'sync_%'").fetchall():
+                db.execute(f'DROP TRIGGER "{name}"')
+            for table in ('mobile_inbox_drafts', 'mobile_inbox', 'sync_outbox', 'sync_imports', 'sync_attachments', 'sync_entities', 'sync_state'):
+                db.execute(f'DROP TABLE {table}')
             db.execute("INSERT INTO questions (stem) VALUES ('旧题目必须保留')")
             db.execute("DROP TABLE vocabulary_words")
             db.execute("DROP TABLE workspace_state")

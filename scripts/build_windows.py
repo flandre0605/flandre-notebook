@@ -13,13 +13,13 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.3.0-preview.1"
+VERSION = "0.4.0-preview.1"
 
 
 def build(compiler=None):
     if sys.platform != "win32":
         raise RuntimeError("Windows 包需要在 Windows 上构建。")
-    output = ROOT / "dist"
+    output = ROOT / "dist" / VERSION
     # A development tool's PATH can shadow Windows DLLs (notably the ICU facade used by Qt).
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
@@ -55,7 +55,7 @@ def build(compiler=None):
                 archive.write(file, file.relative_to(output).as_posix())
     artifacts = [portable]
     if compiler:
-        subprocess.run([str(compiler), f"/DAppVersion={VERSION}", f"/DBundleDir={bundle}",
+        subprocess.run([str(compiler), f"/DAppVersion={VERSION}", f"/DBundleDir={bundle}", f"/O{output}",
                         str(ROOT / "packaging" / "installer.iss")], cwd=ROOT, check=True)
         artifacts.append(output / f"FlandreNotebook-{VERSION}-setup-x64.exe")
     hashes = []
