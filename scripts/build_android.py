@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import zipfile
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +35,7 @@ def build(sdk, java_home, checks=False):
         subprocess.run([str(a) for a in arguments], check=True, cwd=ROOT)
     run(tools / 'aapt2.exe', 'compile', '--dir', source / 'res', '-o', work / 'resources')
     run(tools / 'aapt2.exe', 'link', '-I', library, '--manifest', source / 'AndroidManifest.xml',
-        '--java', work / 'generated', '-o', work / 'unsigned.apk', *sorted((work / 'resources').glob('*.flat')))
+        '-A', source / 'assets', '--java', work / 'generated', '-o', work / 'unsigned.apk', *sorted((work / 'resources').glob('*.flat')))
     sources = sorted((source / 'java').rglob('*.java')) + sorted((work / 'generated').rglob('*.java'))
     run(javac, '-encoding', 'UTF-8', '-source', '8', '-target', '8', '-classpath', library,
         '-d', work / 'classes', *sources)
@@ -51,7 +52,8 @@ def build(sdk, java_home, checks=False):
         run(java_home / 'bin/keytool.exe', '-genkeypair', '-keystore', key, '-storepass', 'android',
             '-keypass', 'android', '-alias', 'androiddebugkey', '-dname', 'CN=Flandre Android Preview',
             '-keyalg', 'RSA', '-keysize', '2048', '-validity', '3650', '-noprompt')
-    output = ROOT / 'dist/Flandre-Android-0.1.0-preview.1.apk'
+    version = ET.parse(source / 'AndroidManifest.xml').getroot().attrib['{http://schemas.android.com/apk/res/android}versionName']
+    output = ROOT / f'dist/Flandre-Android-{version}.apk'
     output.parent.mkdir(parents=True, exist_ok=True)
     run(java, '-jar', tools / 'lib/apksigner.jar', 'sign', '--ks', key, '--ks-key-alias', 'androiddebugkey',
         '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', output, work / 'aligned.apk')

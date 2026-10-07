@@ -1,0 +1,3 @@
+KaTeX 0.16.22 (MIT)
+https://github.com/KaTeX/KaTeX/tree/v0.16.22
+Official npm tarball integrity verified: sha512-XCHRdUw4lf3SKBaJe4EvgqIuWwkPSo9XoeO8GjQW94Bp7TWv9hNhzZjZ+OH9yf1UmLygb7DIT5GSFQiyt16zYg==

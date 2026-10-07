@@ -1,0 +1,5 @@
+Personal-account protocol adapted from https://github.com/AmanCode22/deeperseeker
+Pinned revision: 7e550f552b5b31429dcf5213394ca3e74154708f
+Solver: https://github.com/AmanCode22/deepseek_pow_solver (MIT, AmanCode22)
+Bundled WASM SHA256: fde55b7e43b00ce12ae8c08a272fc2e22a96c057e2f120fd7f4056506c10f144
+Only user-driven study tasks; no token pools, rotation, retries or public service.

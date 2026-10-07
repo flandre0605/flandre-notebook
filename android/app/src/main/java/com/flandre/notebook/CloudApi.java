@@ -61,7 +61,7 @@ final class CloudApi {
         finally{c.disconnect();}
     }
     JSONObject rpc(String name,JSONObject args) throws Exception {
-        if(!Arrays.asList("flandre_inbox_submit","flandre_inbox_pull","flandre_sync_pull").contains(name))throw new IOException("接口无效。");
+        if(!Arrays.asList("flandre_inbox_submit","flandre_inbox_pull","flandre_sync_pull","flandre_sync_push").contains(name))throw new IOException("接口无效。");
         Reply r=transport.send("/v1/rdb/rest/rpc/"+name,"POST",args.toString().getBytes(StandardCharsets.UTF_8),"application/json",bearer(),null,2*1024*1024);
         if(r.code!=200)throw new IOException(r.code==404?"云端尚未部署手机待整理脚本，请在电脑端复制 005 脚本执行。":r.code==401||r.code==403?"请重新登录并检查此账号的权限。":"云端暂未完成操作，请重试（"+r.code+"）。");
         return new JSONObject(new String(r.body,StandardCharsets.UTF_8));
@@ -92,8 +92,23 @@ final class CloudApi {
     }
     static String id(){return UUID.randomUUID().toString().replace("-","");}
     static boolean same(Object a,Object b) throws JSONException {
+        if(a instanceof Number&&b instanceof Number)return new java.math.BigDecimal(a.toString()).compareTo(new java.math.BigDecimal(b.toString()))==0;
         if(a instanceof JSONObject&&b instanceof JSONObject){JSONObject x=(JSONObject)a,y=(JSONObject)b;if(x.length()!=y.length())return false;Iterator<String> keys=x.keys();while(keys.hasNext()){String k=keys.next();if(!y.has(k)||!same(x.get(k),y.get(k)))return false;}return true;}
         if(a instanceof JSONArray&&b instanceof JSONArray){JSONArray x=(JSONArray)a,y=(JSONArray)b;if(x.length()!=y.length())return false;for(int i=0;i<x.length();i++)if(!same(x.get(i),y.get(i)))return false;return true;}
         return Objects.equals(a,b);
+    }
+    String questionPath(JSONObject image,String question) throws Exception {
+        Notebook.imageInfo(image,uid,Notebook.id(question));return "/v1/storages/object/flandre-question-images/"+image.getString("key");
+    }
+    void uploadQuestion(String question,JSONObject image,File file) throws Exception {
+        byte[] content=read(file,MAX_IMAGE);if(content.length!=image.getLong("size")||!sha(content).equals(image.getString("sha256")))throw new IOException("原图缺失或损坏，保留同步队列。");
+        String path=questionPath(image,question);Reply r=transport.send(path,"POST",content,image.getString("mime_type"),bearer(),null,128*1024);
+        if(r.code!=200&&r.code!=409)throw new IOException("题目原图上传失败，可稍后重试（"+r.code+"）。");
+        Reply read=transport.send(path,"GET",null,"application/json",bearer(),null,MAX_IMAGE);
+        if(read.code!=200||!Arrays.equals(content,read.body))throw new IOException("原图校验失败，未提交题目。");
+    }
+    byte[] downloadQuestion(String question,JSONObject image) throws Exception {
+        Reply r=transport.send(questionPath(image,question),"GET",null,"application/json",bearer(),null,MAX_IMAGE);
+        if(r.code!=200)throw new IOException("题目原图下载失败（"+r.code+"），未推进同步。");return r.body;
     }
 }
