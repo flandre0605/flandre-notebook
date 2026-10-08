@@ -447,15 +447,17 @@ class ImageRecognitionDialog(QDialog):
     def save_progress(self):
         self._autosave.stop()
         if not self.session_key or not self._draft_state:
-            return
+            return True
         if self.draft_editor is not None:
             self._draft_state.update(drafts=self.draft_editor.values(), current_index=self.draft_editor.current_index)
         self._draft_state["profile_id"] = self.profile.currentData() or ""
         try:
             recognition_drafts.save(self.session_key, self._draft_state)
             self.draft_status.setText("识题草稿已自动保存，关闭后可从首页继续。")
+            return True
         except (OSError, ValueError, sqlite3.Error) as error:
             self.draft_status.setText(f"识题草稿保存失败：{error}。请保留窗口并及时收录。")
+            return False
 
     def _refresh_sessions(self):
         with QSignalBlocker(self.sessions):

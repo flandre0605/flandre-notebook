@@ -11,6 +11,7 @@ from ctypes import wintypes
 def verify_package(app, window, report_path):
     from PySide6.QtCore import QElapsedTimer, QSettings, QThread
     from PySide6.QtGui import QImage
+    from PySide6.QtWidgets import QFrame
     from app.database import store
     from app.paths import PROJECT_ROOT
     from app.services import attachments, backup, credentials, question_files
@@ -24,6 +25,12 @@ def verify_package(app, window, report_path):
         if not os.environ.get("FLANDRE_DATA_DIR") or store.list_questions() or store.list_profiles():
             raise ValueError("Runtime verification requires a new FLANDRE_DATA_DIR workspace.")
         root = store.DATA_DIR
+        assert all(label.text() == '0' for label in window.home_stats.values())
+        assert window.findChild(QFrame, 'emptyLibrary') is not None
+        for name in ('question_template.csv', 'vocabulary_template.csv'):
+            assert len((PROJECT_ROOT / 'assets' / name).read_text(encoding='utf-8').splitlines()) == 1
+        assert not (PROJECT_ROOT / 'assets/vocabulary_template.txt').read_bytes()
+        report['empty_product_workspace'] = True
         for script in ('004_desktop_sync.sql','005_mobile_inbox.sql'):
             assert (PROJECT_ROOT / 'cloud/sql' / script).is_file(), script
         from app.ui.mobile_inbox_dialog import MobileInboxDialog
@@ -36,6 +43,18 @@ def verify_package(app, window, report_path):
         window.cloud_session.close()
         window.cloud_session = previous_session
         report['mobile_inbox_and_deployment_scripts'] = True
+        from app.ui.cloud_account_dialog import CloudSignInDialog
+        registration = CloudSignInDialog(window)
+        registration.set_registration(True)
+        assert registration.registering and not registration.email.isHidden()
+        registration.email.setText('test@example.com')
+        registration.username.setText('new_user')
+        registration.password.setText('Password123!')
+        registration.confirm.setText('different')
+        registration.sign_in()
+        assert registration.worker is None and '不一致' in registration.status.text()
+        registration.close()
+        report['email_registration_ui'] = True
         for resource in ("flandre_icon.png", "flandre_icon.ico", "flandre_pet_chibi.png", "ui", "question_template.csv",
                          "vocabulary_template.csv", "vocabulary_template.txt"):
             assert (PROJECT_ROOT / "assets" / resource).exists(), resource

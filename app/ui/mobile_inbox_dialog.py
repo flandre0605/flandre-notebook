@@ -1,9 +1,8 @@
 import json
 import sqlite3
-from pathlib import Path
 
 from PySide6.QtCore import QThreadPool, Qt
-from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QListWidget, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QListWidget, QPushButton, QVBoxLayout
 from app.services.mobile_inbox import InboxClient, InboxStore
 from app.database import store
 from app.ui.worker import Worker
@@ -19,6 +18,8 @@ class MobileInboxDialog(QDialog):
         self.setStyleSheet(window.styleSheet())
         self.local = InboxStore(window.cloud_directory, window.cloud_session.user_id)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
         hint = QLabel('手机拍题后，在这里接收。打开图片生成草稿，核对后才会收录到题库。\n原图和裁剪图都会保留；关闭识题窗口可稍后继续。')
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -30,25 +31,15 @@ class MobileInboxDialog(QDialog):
         layout.addWidget(self.status)
         actions = QHBoxLayout()
         self.refresh_button = QPushButton('接收手机图片')
+        self.refresh_button.setObjectName('primaryButton')
         self.refresh_button.clicked.connect(self.receive)
         actions.addWidget(self.refresh_button)
         self.open_button = QPushButton('打开并整理')
         self.open_button.clicked.connect(self.open_image)
         actions.addWidget(self.open_button)
-        deploy = QPushButton('复制手机待整理部署脚本')
-        deploy.clicked.connect(self.copy_deployment)
-        actions.addWidget(deploy)
         layout.addLayout(actions)
         self.list.itemDoubleClicked.connect(lambda _: self.open_image())
         self.refresh()
-
-    def copy_deployment(self):
-        path = Path(__file__).resolve().parents[2] / 'cloud/sql/005_mobile_inbox.sql'
-        try:
-            QApplication.clipboard().setText(path.read_text(encoding='utf-8'))
-            self.status.setText('脚本已复制。已有 004 的环境只执行此 005 脚本一次，随后接收图片。')
-        except OSError:
-            self.status.setText('请使用完整源码中的 cloud/sql/005_mobile_inbox.sql。')
 
     def refresh(self):
         self.list.clear()

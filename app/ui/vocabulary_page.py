@@ -146,11 +146,13 @@ class WordStudy(QWidget):
     def save_progress(self):
         self._checkpoint.stop()
         if self._restoring or not self.words or self.index >= len(self.words):
-            return
+            return True
         try:
             store.save_workspace("vocabulary:study", self.session_state())
+            return True
         except (sqlite3.Error, ValueError) as error:
             self.status.setText(f"背诵进度保存失败：{error}")
+            return False
 
     def show_card(self):
         self.stop_requested.emit()
@@ -351,8 +353,6 @@ class VocabularyPage(QDialog):
         upload = self.upload_button = AnimatedButton("导入 TXT / CSV")
         upload.setToolTip("TXT 每行一个单词，可用 Tab 分隔释义；CSV 必须有 word 列，释义可自动补全。")
         upload.clicked.connect(self.import_file)
-        sample = self.sample_button = AnimatedButton("导入 10 个示例词")
-        sample.clicked.connect(lambda: self.import_file(Path(__file__).resolve().parents[2] / "assets" / "vocabulary_template.csv"))
         actions = QHBoxLayout()
         self.library_speak = AnimatedButton("发音")
         self.library_speak.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaVolume))
@@ -360,7 +360,7 @@ class VocabularyPage(QDialog):
         self.resume_import = AnimatedButton("继续导入草稿")
         self.resume_import.clicked.connect(lambda: self.views.setCurrentWidget(self.import_page))
         self.resume_import.hide()
-        for button in (add, self.edit_button, self.delete_button, self.library_speak, upload, sample, self.resume_import):
+        for button in (add, self.edit_button, self.delete_button, self.library_speak, upload, self.resume_import):
             actions.addWidget(button)
         actions.addStretch()
         self.table = QTableWidget(0, 4)
@@ -376,7 +376,7 @@ class VocabularyPage(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.table.cellDoubleClicked.connect(lambda *_: self.edit_word(self.selected_id()))
-        self.empty_hint = QLabel("先添加单词或导入 TXT / CSV；也可以导入 10 个示例词，体验背诵流程。")
+        self.empty_hint = QLabel("还没有收录单词。添加自己的生词，或导入 TXT / CSV 词表开始学习。")
         self.empty_hint.setObjectName("muted")
         self.empty_hint.setWordWrap(True)
         self.status = QLabel()
@@ -631,11 +631,13 @@ class VocabularyPage(QDialog):
     def save_workspaces(self):
         self._autosave.stop()
         if self._restoring:
-            return
+            return True
+        saved = True
         if self.import_table.rowCount():
             try:
                 store.save_workspace("vocabulary:import", dict(filename=self.import_filename, rows=self._draft_rows()))
             except (sqlite3.Error, ValueError) as error:
+                saved = False
                 self.import_status.setText(f"导入草稿保存失败：{error}。请保留窗口并精简过长内容。")
         if self._editing_active:
             try:
@@ -644,8 +646,9 @@ class VocabularyPage(QDialog):
                     raise ValueError("草稿字段最多 4000 个字符。")
                 store.save_workspace(self._word_draft_key(), values)
             except (sqlite3.Error, ValueError) as error:
+                saved = False
                 self.editor_status.setText(f"单词草稿保存失败：{error}")
-        self.study.save_progress()
+        return self.study.save_progress() and saved
 
     def restore_import_draft(self):
         try:
@@ -748,7 +751,7 @@ class VocabularyPage(QDialog):
     def _set_translation_controls(self):
         enabled = not self._translation_busy
         for widget in (self.translate_button, self.translate_import, self.confirm_import, self.save_button,
-                       self.add_button, self.upload_button, self.sample_button, self.profile, self.refresh_models, self.discard_import,
+                       self.add_button, self.upload_button, self.profile, self.refresh_models, self.discard_import,
                        self.word, self.meaning, self.phonetic, self.example, self.book):
             widget.setEnabled(enabled)
         self.import_table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.EditKeyPressed
@@ -864,7 +867,7 @@ class VocabularyPage(QDialog):
         self.empty_hint.setVisible(not rows)
         self.empty_hint.setText(
             "没有符合筛选条件的单词，请调整搜索、单词本或复习范围。" if summary[0]
-            else "先添加单词或导入 TXT / CSV；也可以导入 10 个示例词，体验背诵流程。"
+            else "还没有收录单词。添加自己的生词，或导入 TXT / CSV 词表开始学习。"
         )
 
     def show_library(self):

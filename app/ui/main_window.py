@@ -283,14 +283,18 @@ class QuestionDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, cloud_session=None, cloud_root=None):
+    def __init__(self, cloud_session=None, cloud_root=None, cloud_lock=None):
         super().__init__()
+        self.cloud_lock = cloud_lock
+        self.resize(1280, 820)
+        self._build_workspace(cloud_session, cloud_root)
+
+    def _build_workspace(self, cloud_session, cloud_root):
         self.cloud_session = cloud_session
         self.cloud_root = Path(cloud_root) if cloud_root is not None else store.DATA_DIR
         self.cloud_directory = store.DATA_DIR
         self._cloud_dialog = None
-        self.setWindowTitle("AI 错题本" + (f" · {cloud_session.username}" if cloud_session else ""))
-        self.resize(1280, 820)
+        self.setWindowTitle("Flandre 错题本" + (f" · {cloud_session.username}" if cloud_session else ""))
         self.setMinimumSize(1040, 680)
         self.setAcceptDrops(True)
         self.setStyleSheet(STYLE)
@@ -312,9 +316,9 @@ class MainWindow(QMainWindow):
         brand_mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
         brand_mark.setFixedSize(42, 42)
         brand_text = QVBoxLayout()
-        brand_title = QLabel("AI 错题本")
+        brand_title = QLabel("Flandre")
         brand_title.setObjectName("brandTitle")
-        brand_caption = QLabel("收集 · 整理 · 复习")
+        brand_caption = QLabel("你的学习空间")
         brand_caption.setObjectName("muted")
         brand_text.addWidget(brand_title)
         brand_text.addWidget(brand_caption)
@@ -361,6 +365,8 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(section_label)
         add_nav("设置", self.manage_profiles, "M3 6h18 M3 12h18 M3 18h18 M8 3v6 M16 9v6 M8 15v6", page_key="settings", utility=True)
         add_nav("账号与同步", self.manage_cloud, "M12 12a4 4 0 1 0 0-8a4 4 0 0 0 0 8 M4 21a8 8 0 0 1 16 0", utility=True)
+        if cloud_session:
+            add_nav("本机题库", lambda: self.switch_workspace(None), "M3 3h18v14H3z M8 21h8 M12 17v4", utility=True)
         add_nav("手机待整理", self.open_mobile_inbox, "M7 2h10v20H7z M10 18h4", utility=True)
         add_nav("备份数据", self.create_backup, "M12 3v12 M7 10l5 5 5-5 M4 16v5h16v-5", utility=True)
         add_nav("恢复备份", self.restore_backup, "M3 10a9 9 0 1 1 1 8 M3 4v6h6", utility=True)
@@ -500,7 +506,7 @@ class MainWindow(QMainWindow):
         self.empty_action.setObjectName("primaryButton")
         self.empty_action.clicked.connect(self._empty_action)
         empty_card = QFrame()
-        empty_card.setStyleSheet("background:white;")
+        empty_card.setObjectName("emptyLibrary")
         empty_layout = QVBoxLayout(empty_card)
         empty_layout.addStretch(1)
         empty_layout.addWidget(self.empty_title)
@@ -662,6 +668,110 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.show_home()
 
+    def can_switch_workspace(self):
+        from PySide6.QtCore import QThreadPool
+        busy = QThreadPool.globalInstance().activeThreadCount() > 0
+        busy |= any(getattr(d, '_recognizing', False) for d in self._recognition_dialogs)
+        busy |= 'vocabulary' in self._pages and self.vocabulary_page._translation_busy
+        busy |= self._cloud_dialog is not None and (self._cloud_dialog.worker is not None or
+            any(getattr(child, 'worker', None) is not None for child in self._cloud_dialog.children()))
+        if self._profiles_dialog is not None:
+            busy |= any(getattr(self._profiles_dialog, name, None) is not None
+                        for name in ('worker', 'models_worker', 'web_worker'))
+        if busy:
+            self.statusBar().showMessage('识题、同步或模型请求正在进行，请结束后再切换题库。', 10000)
+            return False
+        if 'question' in self._pages or 'practice_run' in self._pages:
+            self.statusBar().showMessage('请先保存或关闭题目编辑，结束当前练习后再切换。未保存内容仍保留。', 10000)
+            return False
+        if self._profiles_dialog is not None:
+            profile = self._profiles_dialog
+            values = profile._values()
+            original = profile._current() or dict(name='', base_url='', endpoint_path='/chat/completions',
+                model_id='', timeout_seconds=60, vision_enabled=0, enabled=1)
+            if profile.api_key.text() or any(values[key] != original[key] for key in values):
+                self.statusBar().showMessage('模型配置尚未保存，请先保存或撤销修改，再切换题库。', 10000)
+                return False
+        if not self._save_workspaces():
+            self.statusBar().showMessage('笔记或学习草稿尚未保存，请修正输入后再切换。内容继续保留。', 10000)
+            return False
+        return True
+
+    def switch_workspace(self, session, logout=False):
+        from PySide6.QtCore import QLockFile
+        from app.services.cloud_accounts import account_directory
+        from app.services.cloud_sync_store import SyncStore
+        from app.services.cloud_sync import ENVIRONMENT_ID
+        from app.services.storage import use_directory
+        from shiboken6 import delete
+        if not self.can_switch_workspace():
+            if session is not None and session is not self.cloud_session:
+                session.close()
+            return False
+        root = self.cloud_root
+        if session is self.cloud_session:
+            return True
+        next_lock = None
+        notice = ''
+        try:
+            directory = account_directory(root, session.user_id) if session else root
+            if directory == self.cloud_directory:
+                next_lock = self.cloud_lock
+            directory.mkdir(parents=True, exist_ok=True)
+            if session and next_lock is None:
+                next_lock = QLockFile(str(directory / '.workspace.lock'))
+                if not next_lock.tryLock(0):
+                    raise ValueError('此账号题库已在另一程序中打开，请先关闭那个窗口。')
+            store.initialize(directory / 'questions.db')
+            if session:
+                SyncStore(directory, session.user_id, ENVIRONMENT_ID).bind()
+                try:
+                    session.remember(root)
+                except RuntimeError as error:
+                    notice = str(error)
+            if logout and self.cloud_session:
+                self.cloud_session.logout()
+        except (OSError, sqlite3.Error, ValueError, RuntimeError) as error:
+            if next_lock is not None and next_lock is not self.cloud_lock:
+                next_lock.unlock()
+            if session is not None and session is not self.cloud_session:
+                session.close()
+            self.statusBar().showMessage(f'切换未完成：{error}。原题库继续保留。', 15000)
+            return False
+        # Save and dispose old widgets/timers before changing any default data paths.
+        self.restore_mini_practice(show_main=False)
+        self._motion.finish()
+        self._cancel_screenshot()
+        self._screenshot_hotkey.close()
+        if 'vocabulary' in self._pages:
+            self.vocabulary_page.speech.stop()
+        for dialog in list(self._recognition_dialogs):
+            dialog.reject()
+            if dialog._autosave.isActive():
+                dialog._autosave.stop()
+        for timer in self.centralWidget().findChildren(QTimer):
+            timer.stop()
+        self._notes_timer.stop()
+        delete(self._notes_timer)
+        delete(self._motion)
+        old_session, old_lock = self.cloud_session, self.cloud_lock
+        self.setUpdatesEnabled(False)
+        try:
+            delete(self.takeCentralWidget())
+            use_directory(directory)
+            from PySide6.QtWidgets import QApplication
+            QApplication.instance().setApplicationName('FlandreAccount-' + directory.name[:16] if session else 'AI 错题本')
+            self.cloud_lock = next_lock
+            self._build_workspace(session, root)
+        finally:
+            self.setUpdatesEnabled(True)
+        if old_session is not None and old_session is not session:
+            old_session.close()
+        if old_lock is not None and old_lock is not next_lock:
+            old_lock.unlock()
+        self.statusBar().showMessage(notice or ('已切换到账号题库，原本机题库保留。' if session else '已返回本机题库，账号数据保留。'), 15000)
+        return True
+
     def _build_home(self):
         canvas = QWidget()
         canvas.setObjectName("homeCanvas")
@@ -673,15 +783,20 @@ class MainWindow(QMainWindow):
         hero_layout = QHBoxLayout(hero)
         hero_layout.setContentsMargins(26, 22, 26, 22)
         intro = QVBoxLayout()
-        eyebrow = QLabel("YOUR STUDY SPACE  /  学习空间")
-        eyebrow.setObjectName("muted")
+        eyebrow = QLabel("学习，从积累开始")
+        eyebrow.setObjectName("heroEyebrow")
         title = QLabel("今天，从哪里开始？")
-        title.setObjectName("pageTitle")
+        title.setObjectName("heroTitle")
         caption = QLabel("把不会的题收好，把学过的知识记牢。")
-        caption.setObjectName("pageSubtitle")
+        caption.setObjectName("heroCaption")
         intro.addWidget(eyebrow)
         intro.addWidget(title)
         intro.addWidget(caption)
+        collect = AnimatedButton("截图收录新题")
+        collect.setObjectName("heroButton")
+        collect.clicked.connect(self.capture_screenshot)
+        intro.addSpacing(10)
+        intro.addWidget(collect, alignment=Qt.AlignmentFlag.AlignLeft)
         hero_layout.addLayout(intro, 1)
         mascot = QLabel()
         mascot.setPixmap(QPixmap(str(Path(__file__).resolve().parents[2] / "assets" / "flandre_icon.png")).scaled(
@@ -705,7 +820,7 @@ class MainWindow(QMainWindow):
             stats.addWidget(card, 1)
             self.home_stats[key] = value
         layout.addLayout(stats)
-        heading = QLabel("选择学习方式")
+        heading = QLabel("学习与整理")
         heading.setObjectName("detailTitle")
         layout.addWidget(heading)
         grid = QGridLayout()
@@ -943,10 +1058,10 @@ class MainWindow(QMainWindow):
         if practice is not None:
             practice.save_progress()
         if "vocabulary" in self._pages:
-            self.vocabulary_page.save_workspaces()
+            notes_saved = self.vocabulary_page.save_workspaces() and notes_saved
         for dialog in self._recognition_dialogs:
             if hasattr(dialog, "save_progress"):
-                dialog.save_progress()
+                notes_saved = dialog.save_progress() and notes_saved
         return notes_saved
 
     def closeEvent(self, event):

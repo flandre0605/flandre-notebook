@@ -97,7 +97,7 @@ def check(preview_directory=None):
             vocabulary.record_review(word_id, "forgot")
             assert len(vocabulary.list_words(scope="due")) == 1
             fails(lambda: vocabulary.record_review(word_id, "invalid"))
-            page.import_file(Path(__file__).resolve().parents[1] / "assets" / "vocabulary_template.csv")
+            page.import_file(Path(__file__).resolve().parents[1] / "checks" / "fixtures" / "vocabulary_template.csv")
             assert len(vocabulary.list_words()) == 10
             assert vocabulary.get_word(word_id)["meaning"] == "v. 记住；记得"
             bad_csv = root / "bad.csv"

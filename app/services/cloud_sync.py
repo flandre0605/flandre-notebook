@@ -1,9 +1,10 @@
-"""Ordinary-user HTTP sync. Passwords and sessions are kept in memory only."""
+"""Ordinary-user HTTP sync. Passwords are never stored; refresh credentials use the OS vault."""
 import hashlib
 import json
 from pathlib import Path
 import re
 import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,24 +21,72 @@ class CloudSyncError(RuntimeError):
 
 
 class CloudSession:
-    def __init__(self, login_result, username):
+    def __init__(self, login_result, username, device_id=''):
         self.user_id = login_result['user_id']
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', self.user_id):
             raise CloudSyncError('用户编号格式无法用于账号目录，未打开题库。')
         self.username = username
         self.token = login_result['access_token']
+        self.refresh_token = login_result.get('refresh_token', '')
+        self.device_id = device_id
+        self._store = None
+        self._lock = threading.RLock()
         self.expires_at = time.monotonic() + login_result['expires_in']
         self.closed = False
         login_result.clear()
 
-    def require_token(self):
-        if self.closed or not self.token or time.monotonic() >= self.expires_at:
-            raise CloudSyncError('登录已到期，请重新登录后同步。本地修改和待上传任务已保留。')
-        return self.token
+    def remember(self, root):
+        if not self.refresh_token:
+            return
+        from app.services.cloud_session_store import CloudSessionStore
+        self._store = CloudSessionStore(root)
+        self._store.save(self)
+
+    def require_token(self, rejected=None):
+        from app.services.cloudbase_login import refresh_session, LoginCheckError, SessionExpired
+        with self._lock:
+            if self.closed:
+                raise CloudSyncError('账号已关闭，请重新登录。')
+            refresh = (not self.token or time.monotonic() >= self.expires_at - 60
+                       or rejected is not None and rejected == self.token)
+            if refresh and self.refresh_token:
+                try:
+                    result = refresh_session(ENVIRONMENT_ID, self.refresh_token, self.device_id, self.user_id)
+                except SessionExpired as error:
+                    try:
+                        self.logout()
+                    except RuntimeError:
+                        pass
+                    raise CloudSyncError(str(error)) from None
+                except LoginCheckError as error:
+                    raise CloudSyncError(str(error)) from None
+                self.token = result['access_token']
+                self.refresh_token = result['refresh_token']
+                self.expires_at = time.monotonic() + result['expires_in']
+                result.clear()
+                if self._store:
+                    try:
+                        self._store.save(self)
+                    except RuntimeError:
+                        try:
+                            self._store.clear(self.user_id)
+                        except RuntimeError:
+                            pass
+                        raise CloudSyncError('新的登录凭据未能安全保存，请重新登录。题库修改已保留。') from None
+            if not self.token or time.monotonic() >= self.expires_at:
+                raise CloudSyncError('登录已到期，请重新登录后同步。本地修改和待上传任务已保留。')
+            return self.token
 
     def close(self):
-        self.closed = True
-        self.token = ''
+        with self._lock:
+            self.closed = True
+            self.token = self.refresh_token = ''
+
+    def logout(self):
+        with self._lock:
+            self.close()
+            if self._store:
+                self._store.clear(self.user_id)
 
 
 class CloudClient:
@@ -51,6 +100,13 @@ class CloudClient:
 
     def request(self, path, method, body=None, mime='application/json', limit=12 * 1024 * 1024):
         token = self.session.require_token()
+        status, content = self._request(path, method, body, mime, limit, token)
+        if status == 401 and self.session.refresh_token:
+            token = self.session.require_token(rejected=token)
+            status, content = self._request(path, method, body, mime, limit, token)
+        return status, content
+
+    def _request(self, path, method, body, mime, limit, token):
         request = urllib.request.Request(self.base + path, method=method, data=body,
             headers={'Authorization': f'Bearer {token}', 'Content-Type': mime, 'Accept': '*/*', 'Cache-Control': 'no-store'})
         try:
@@ -72,10 +128,10 @@ class CloudClient:
         status, content = self.request('/v1/rdb/rest/rpc/' + name, 'POST', json.dumps(arguments).encode('utf-8'))
         if status != 200:
             if status == 404:
-                raise CloudSyncError('云端接口尚未部署或未刷新。请核对对应的电脑端／手机待整理部署脚本后重试。')
+                raise CloudSyncError('同步服务暂不可用，请稍后重试。本地修改已保留。')
             if status in (401, 403):
                 raise CloudSyncError('云端未授权本次操作。请重新登录并检查账号权限，本地数据已保留。')
-            raise CloudSyncError(f'云端未完成同步（HTTP {status}）。请核对部署和权限配置，本地修改已保留。')
+            raise CloudSyncError(f'云端未完成同步（HTTP {status}）。请稍后重试，本地修改已保留。')
         try:
             value = json.loads(content)
         except (ValueError, UnicodeError):

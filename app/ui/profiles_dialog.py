@@ -47,9 +47,9 @@ class ProfilesDialog(QDialog):
         self.vision = QCheckBox("支持图片识题")
         self.enabled = QCheckBox("启用")
         self.enabled.setChecked(True)
-        self.test_button = AnimatedButton("测试连接")
+        self.test_button = AnimatedButton("验证连接")
         self.test_button.clicked.connect(self._test)
-        self.connection_status = QLabel("尚未测试连接")
+        self.connection_status = QLabel("尚未验证连接")
         self.connection_status.setWordWrap(True)
         self.connection_status.setStyleSheet(f"color:{MUTED};font-size:12px;")
         self.screenshot_shortcut = QKeySequenceEdit(
@@ -207,6 +207,7 @@ class ProfilesDialog(QDialog):
         QThreadPool.globalInstance().start(self.web_worker)
 
     def _web_started(self, key):
+        self.web_worker = None
         self.web_start_button.setEnabled(True)
         index = next((i for i, row in enumerate(self.rows) if row["name"] == "DeepSeek 网页版（本机）"
                       and row["base_url"] == f"{deepseek_web.ORIGIN}/v1"), None)
@@ -226,6 +227,7 @@ class ProfilesDialog(QDialog):
             self.connection_status.setText("本地服务已启动，尚未验证网页账号。打开管理页，用户名 notebook；点击复制管理密码登录并添加网页 Token。")
 
     def _web_failed(self, error):
+        self.web_worker = None
         self.web_start_button.setEnabled(True)
         self.connection_status.setText(str(error))
 
@@ -306,11 +308,11 @@ class ProfilesDialog(QDialog):
         self.enabled.setChecked(True)
         self.test_button.setEnabled(False)
         self.delete_button.setEnabled(False)
-        self.connection_status.setText("尚未测试连接")
+        self.connection_status.setText("尚未验证连接")
         self.connection_status.setStyleSheet(f"color:{MUTED};font-size:12px;")
 
     def _mark_edited(self, *_):
-        self.connection_status.setText("配置已修改，请重新测试")
+        self.connection_status.setText("配置已修改，请重新验证")
         self.connection_status.setStyleSheet("color:#a66a16;font-size:12px;")
 
     def _show_profile(self, index):
@@ -328,7 +330,7 @@ class ProfilesDialog(QDialog):
         self.enabled.setChecked(bool(row["enabled"]))
         self.test_button.setEnabled(True)
         self.delete_button.setEnabled(True)
-        self.connection_status.setText("尚未测试连接")
+        self.connection_status.setText("尚未验证连接")
         self.connection_status.setStyleSheet(f"color:{MUTED};font-size:12px;")
 
     def _new(self):
@@ -379,7 +381,7 @@ class ProfilesDialog(QDialog):
     def _test(self):
         row = self._current()
         if row is None:
-            self.connection_status.setText("请先保存模型配置，再测试连接。")
+            self.connection_status.setText("请先保存模型配置，再验证连接。")
             self.connection_status.setStyleSheet("color:#a66a16;font-size:12px;")
             return
         key = self.api_key.text().strip()
@@ -437,6 +439,7 @@ class ProfilesDialog(QDialog):
         QThreadPool.globalInstance().start(self.models_worker)
 
     def _models_succeeded(self, models):
+        self.models_worker = None
         self.fetch_models_button.setEnabled(True)
         self.connection_status.setText(f"获取到 {len(models)} 个模型")
         self.connection_status.setStyleSheet("color:#27734b;font-size:12px;font-weight:600;")
@@ -448,18 +451,21 @@ class ProfilesDialog(QDialog):
         self.model.blockSignals(False)
 
     def _models_failed(self, error):
+        self.models_worker = None
         self.fetch_models_button.setEnabled(True)
         self.connection_status.setText(f"模型列表获取失败，可手动填写模型 ID：{error}")
         self.connection_status.setToolTip(str(error))
         self.connection_status.setStyleSheet("color:#b84d58;font-size:12px;font-weight:600;")
 
     def _test_succeeded(self, response):
+        self.worker = None
         self.test_button.setEnabled(True)
         self.connection_status.setText("连接成功")
         self.connection_status.setStyleSheet("color:#27734b;font-size:12px;font-weight:600;")
         self.connection_status.setToolTip(response[:500])
 
     def _test_failed(self, error):
+        self.worker = None
         self.test_button.setEnabled(True)
         self.connection_status.setText(f"连接失败：{error}")
         self.connection_status.setStyleSheet("color:#b84d58;font-size:12px;font-weight:600;")

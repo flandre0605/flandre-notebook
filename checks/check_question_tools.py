@@ -28,7 +28,7 @@ def check():
         database = root / "questions.db"
         store.initialize(database)
         with patch.object(store, "_connection", lambda: connection(database)), patch("app.ui.main_window.GlobalScreenshotHotkey"):
-            assert len(files.read_questions(Path(__file__).resolve().parents[1] / "assets" / "question_template.csv")) == 2
+            assert len(files.read_questions(Path(__file__).resolve().parents[1] / "checks" / "fixtures" / "question_template.csv")) == 2
             rows = files.validate_questions([dict(stem=r"计算 $\frac{1}{2}+\frac{1}{3}$", subject="数学", answer="5/6", is_wrong=1),
                                              dict(stem="=危险的电子表格公式", subject="英语", answer="'quoted")])
             assert files.import_questions(rows) == (2, 0)

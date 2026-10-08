@@ -8,7 +8,8 @@ from unittest.mock import patch
 import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.services.cloudbase_login import LoginCheckError, _NoRedirect, validate_login
+from app.services.cloudbase_login import (LoginCheckError, _NoRedirect, validate_login,
+    send_registration_code, registration_fields)
 
 
 class LoginCheckTests(unittest.TestCase):
@@ -51,6 +52,56 @@ class LoginCheckTests(unittest.TestCase):
             with self.assertRaises(LoginCheckError):
                 validate_login("https://elsewhere", "test_a", "password", "device")
             build.assert_not_called()
+
+    def test_verified_email_registration_returns_existing_session_shape(self):
+        responses = [dict(verification_id='email-bound', expires_in=600),
+                     dict(verification_token='verification-secret', expires_in=600),
+                     dict(token_type='Bearer', access_token='memory-only', refresh_token='discarded',
+                          expires_in=7200, sub='new-user')]
+        with patch('app.services.cloudbase_login.urllib.request.build_opener') as build:
+            build.return_value.open.side_effect = [BytesIO(json.dumps(r).encode()) for r in responses]
+            challenge = send_registration_code('test-env', ' test@example.com ', 'device')
+            result = challenge.signup('test-env', 'test@example.com', 'new_user', 'Password123!', '123456', 'device')
+            requests = [call.args[0] for call in build.return_value.open.call_args_list]
+            self.assertEqual([r.full_url.rsplit('/auth/v1/', 1)[1] for r in requests],
+                             ['verification', 'verification/verify', 'signup'])
+            self.assertEqual(json.loads(requests[0].data), {'email':'test@example.com', 'target':'ANY'})
+            self.assertEqual(json.loads(requests[1].data), {'verification_id':'email-bound', 'verification_code':'123456'})
+            self.assertEqual(json.loads(requests[2].data), {'email':'test@example.com', 'username':'new_user',
+                'password':'Password123!', 'verification_token':'verification-secret'})
+            self.assertTrue(all(r.get_header('X-device-id') == 'device' for r in requests))
+            self.assertEqual(result, {'user_id':'new-user', 'access_token':'memory-only', 'expires_in':7200, 'refresh_token':'discarded'})
+            with self.assertRaises(LoginCheckError):
+                challenge.signup('test-env', challenge.email, 'new_user', 'Password123!', '123456', 'device')
+            self.assertEqual(build.return_value.open.call_count, 3, 'consumed challenge must not resend')
+
+    def test_registration_rejects_changed_email_expiry_and_invalid_input_before_network(self):
+        with patch('app.services.cloudbase_login.urllib.request.build_opener') as build:
+            build.return_value.open.return_value = BytesIO(b'{"verification_id":"email-bound","expires_in":600}')
+            challenge = send_registration_code('test-env', 'test@example.com', 'device')
+            for email, name, password, code in [('other@example.com','new_user','Password123!','123456'),
+                (challenge.email,'x','Password123!','123456'), (challenge.email,'new_user','short','123456'),
+                (challenge.email,'new_user','Password123!','abc123')]:
+                with self.assertRaises(LoginCheckError):
+                    challenge.signup('test-env', email, name, password, code, 'device')
+            challenge.deadline = 0
+            with self.assertRaises(LoginCheckError):
+                challenge.signup('test-env', challenge.email, 'new_user', 'Password123!', '123456', 'device')
+            self.assertEqual(build.return_value.open.call_count, 1)
+            with self.assertRaises(LoginCheckError):
+                registration_fields('bad-email')
+
+    def test_registration_errors_are_safe_and_not_retried(self):
+        for response in [dict(is_user=True, verification_id='unused', expires_in=600),
+            dict(error='rate_limit_exceeded', error_description='SECRET'),
+            dict(error='captcha_required', error_description='SECRET'),
+            dict(error='unimplemented', error_description='SECRET'), dict(verification_id='', expires_in=600)]:
+            with patch('app.services.cloudbase_login.urllib.request.build_opener') as build:
+                build.return_value.open.return_value = BytesIO(json.dumps(response).encode())
+                with self.assertRaises(LoginCheckError) as raised:
+                    send_registration_code('test-env', 'test@example.com', 'device')
+                self.assertNotIn('SECRET', str(raised.exception))
+                build.return_value.open.assert_called_once()
 
 
 if __name__ == "__main__":

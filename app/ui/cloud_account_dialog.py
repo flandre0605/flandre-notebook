@@ -1,33 +1,23 @@
 """Account sign-in and reviewable sync controls, separate from probe tools."""
 import json
 from contextlib import closing
-from pathlib import Path
 import sqlite3
+import time
 from uuid import uuid4
 
-from PySide6.QtCore import QSettings, QThreadPool, Qt, QUrl
+from PySide6.QtCore import QSettings, QThreadPool, QTimer, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import (QApplication, QDialog, QFormLayout,
+from PySide6.QtWidgets import (QDialog, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QTextEdit, QVBoxLayout)
 
-from app.services.cloudbase_login import LoginCheckError, login_session
+from app.services.cloudbase_login import LoginCheckError, login_session, registration_fields, send_registration_code
 from app.services.cloud_sync import CloudClient, CloudSession, CloudSyncError, ENVIRONMENT_ID, synchronize
-from app.services.cloud_accounts import open_account
 from app.ui.worker import Worker
 from app.ui.theme import STYLE
 
 
-def copy_deployment(status):
-    try:
-        path = Path(__file__).resolve().parents[2] / 'cloud/sql/004_desktop_sync.sql'
-        QApplication.clipboard().setText(path.read_text(encoding='utf-8'))
-        status.setText('部署脚本已复制。在 CloudBase 的 SQL 编辑器执行一次；已部署时无需重复执行。')
-    except OSError:
-        status.setText('部署脚本未包含在此版本中，请使用完整源码版本。')
-
-
 class CloudSignInDialog(QDialog):
-    def __init__(self, parent=None, username='tes_1', expected_user=None):
+    def __init__(self, parent=None, username='', expected_user=None):
         super().__init__(parent)
         self.setWindowTitle('Flandre · 登录账号题库')
         self.setStyleSheet(STYLE)
@@ -35,33 +25,119 @@ class CloudSignInDialog(QDialog):
         self.expected_user = expected_user
         self.session = None
         self.worker = None
+        self.registering = False
+        self.challenge = None
+        self.resend_at = 0
         settings = QSettings('FlandreNotebook', 'CloudLoginCheck')
         self.device_id = settings.value('device_id', '')
         if not self.device_id:
             self.device_id = uuid4().hex
             settings.setValue('device_id', self.device_id)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
+        heading = QLabel('欢迎使用 Flandre')
+        heading.setObjectName('pageTitle')
+        layout.addWidget(heading)
         hint = QLabel('登录后打开此账号独立的题库和图片目录。\n本地题库可继续使用，导入和云同步都有独立入口。')
         hint.setWordWrap(True)
+        self.hint = hint
         layout.addWidget(hint)
         form = QFormLayout()
         self.username = QLineEdit(username)
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.email = QLineEdit()
+        self.email.setPlaceholderText('接收注册验证码的邮箱')
+        self.code = QLineEdit()
+        self.code.setMaxLength(6)
+        self.code.setPlaceholderText('邮件中的 6 位验证码')
+        self.confirm = QLineEdit()
+        self.confirm.setEchoMode(QLineEdit.EchoMode.Password)
+        self.send_button = QPushButton('发送邮箱验证码')
+        self.send_button.clicked.connect(self.send_code)
+        form.addRow('邮箱', self.email)
+        form.addRow('', self.send_button)
+        form.addRow('验证码', self.code)
         form.addRow('用户名', self.username)
         form.addRow('密码', self.password)
+        form.addRow('确认密码', self.confirm)
+        self.form = form
         layout.addLayout(form)
         self.login_button = QPushButton('登录并打开题库')
+        self.login_button.setObjectName('primaryButton')
         self.login_button.clicked.connect(self.sign_in)
         self.password.returnPressed.connect(self.sign_in)
+        self.confirm.returnPressed.connect(self.sign_in)
         layout.addWidget(self.login_button)
-        deploy = QPushButton('复制电脑端同步部署脚本')
-        deploy.clicked.connect(lambda: copy_deployment(self.status))
-        layout.addWidget(deploy)
-        self.status = QLabel('上海体验环境 · 密码和登录凭据不保存。')
+        self.switch_button = QPushButton('没有账号？注册新账号')
+        self.switch_button.clicked.connect(lambda: self.set_registration(not self.registering))
+        self.switch_button.setVisible(expected_user is None)
+        layout.addWidget(self.switch_button)
+        self.status = QLabel('登录状态由系统安全保存。')
+        self.status.setObjectName('muted')
         self.status.setWordWrap(True)
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.status)
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.update_send)
+        self.timer.start()
+        self.set_registration(False)
+
+    def set_registration(self, enabled):
+        if self.worker is not None or (enabled and self.expected_user is not None):
+            return
+        self.registering = enabled
+        self.challenge = None
+        self.password.clear()
+        self.confirm.clear()
+        self.code.clear()
+        for field in (self.email, self.send_button, self.code, self.confirm):
+            self.form.setRowVisible(field, enabled)
+        self.setWindowTitle('Flandre · 注册账号' if enabled else 'Flandre · 登录账号题库')
+        self.hint.setText('验证邮箱后创建账号，手机和电脑使用同一用户名登录。\n'
+            '用户名 5～24 位字母、数字、_ 或 -；密码 8～32 位，含字母和数字。' if enabled else
+            '登录后打开此账号独立的题库和图片目录。\n本地题库可继续使用，导入和云同步都有独立入口。')
+        self.login_button.setText('注册并打开题库' if enabled else '登录并打开题库')
+        self.switch_button.setText('已有账号？返回登录' if enabled else '没有账号？注册新账号')
+        self.status.setText('密码和验证码不保存，登录状态由系统安全保存。')
+        self.update_send()
+
+    def update_send(self):
+        seconds = max(0, int(self.resend_at - time.monotonic() + .999))
+        self.send_button.setText(f'{seconds} 秒后可重新发送' if seconds else '发送邮箱验证码')
+        self.send_button.setEnabled(self.worker is None and seconds == 0)
+
+    def _start(self, function, completed, message):
+        for control in (self.username, self.password, self.email, self.code, self.confirm,
+                        self.login_button, self.switch_button, self.send_button):
+            control.setEnabled(False)
+        self.status.setText(message)
+        self.worker = Worker(function)
+        self.worker.signals.succeeded.connect(completed)
+        self.worker.signals.failed.connect(self._failed)
+        QThreadPool.globalInstance().start(self.worker)
+
+    def send_code(self):
+        if self.worker is not None or time.monotonic() < self.resend_at:
+            return
+        try:
+            email = registration_fields(self.email.text())
+        except LoginCheckError as error:
+            self.status.setText(str(error))
+            return
+        self.challenge = None
+        self.code.clear()
+        self.resend_at = time.monotonic() + 60
+        self._start(lambda: send_registration_code(ENVIRONMENT_ID, email, self.device_id),
+                    self._code_sent, '正在发送邮箱验证码……')
+
+    def _code_sent(self, challenge):
+        self._finish()
+        self.challenge = challenge
+        self.status.setText('验证码已发送，请检查收件箱和垃圾邮件。修改邮箱后需重新发送。')
+        self.code.setFocus()
 
     def sign_in(self):
         if self.worker is not None:
@@ -70,31 +146,44 @@ class CloudSignInDialog(QDialog):
         if not username or not password:
             self.status.setText('请填写用户名和密码。')
             return
+        if self.registering:
+            email, code = self.email.text().strip(), self.code.text().strip()
+            try:
+                registration_fields(email, username, password)
+                if password != self.confirm.text():
+                    raise LoginCheckError('两次密码不一致。')
+                if self.challenge is None:
+                    raise LoginCheckError('请先发送邮箱验证码。')
+            except LoginCheckError as error:
+                self.status.setText(str(error))
+                return
+            challenge = self.challenge
+            self.password.clear()
+            self.confirm.clear()
+            self.code.clear()
+            self._start(lambda: challenge.signup(ENVIRONMENT_ID, email, username, password, code, self.device_id),
+                        lambda result: self._logged_in(result, username), '正在验证邮箱并注册……')
+            return
         self.password.clear()
-        self.username.setEnabled(False)
-        self.password.setEnabled(False)
-        self.login_button.setEnabled(False)
-        self.status.setText('正在登录，请稍候……')
-        self.worker = Worker(lambda: login_session(ENVIRONMENT_ID, username, password, self.device_id))
-        self.worker.signals.succeeded.connect(lambda result: self._logged_in(result, username))
-        self.worker.signals.failed.connect(self._failed)
-        QThreadPool.globalInstance().start(self.worker)
+        self._start(lambda: login_session(ENVIRONMENT_ID, username, password, self.device_id),
+                    lambda result: self._logged_in(result, username), '正在登录，请稍候……')
 
     def _finish(self):
         self.worker.function = lambda: None
         self.worker = None
-        self.username.setEnabled(True)
-        self.password.setEnabled(True)
-        self.login_button.setEnabled(True)
+        for control in (self.username, self.password, self.email, self.code, self.confirm,
+                        self.login_button, self.switch_button):
+            control.setEnabled(True)
+        self.update_send()
 
     def _logged_in(self, result, username):
         self._finish()
         if self.expected_user is not None and result.get('user_id') != self.expected_user:
             result.clear()
-            self.status.setText('这是其他账号。请登录当前账号；使用“打开另一个账号”切换题库。')
+            self.status.setText('这是其他账号。请登录当前账号；使用“切换账号”切换题库。')
             return
         try:
-            self.session = CloudSession(result, username)
+            self.session = CloudSession(result, username, self.device_id)
         except CloudSyncError as error:
             result.clear()
             self.status.setText(str(error))
@@ -110,6 +199,10 @@ class CloudSignInDialog(QDialog):
             self.status.setText('正在登录，请结束后再关闭。')
             return
         super().reject()
+        self.password.clear()
+        self.confirm.clear()
+        self.code.clear()
+        self.challenge = None
 
 
 class CloudAccountDialog(QDialog):
@@ -121,11 +214,14 @@ class CloudAccountDialog(QDialog):
         self.worker = None
         self.controls = []
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(16)
         session = window.cloud_session
         self.heading = QLabel('本地学习空间' if session is None else f'当前账号：{session.username}')
+        self.heading.setObjectName('pageTitle')
         self.heading.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.heading)
-        hint = QLabel('账号题库在独立窗口中打开。登录不会自动上传原来的本地题库。' if session is None else
+        hint = QLabel('登录后在当前窗口切换题库。本机题库保留，登录不会自动上传。' if session is None else
                       '同步题目、笔记、掌握状态和原图。断网时继续本地保存，恢复网络后可手动同步。\n'
                       '单词、逐次练习历史和编辑草稿保存在此账号的本机目录。')
         hint.setWordWrap(True)
@@ -141,9 +237,9 @@ class CloudAccountDialog(QDialog):
             self.controls.append(value)
             actions.addWidget(value)
             return value
-        button('登录账号' if session is None else '打开另一个账号', lambda: open_account(window.cloud_root))
+        button('登录／注册账号' if session is None else '切换账号', self.sign_in).setObjectName('primaryButton' if session is None else 'softButton')
         if session:
-            button('立即同步', self.sync)
+            button('立即同步', self.sync).setObjectName('primaryButton')
             button('重新登录', self.renew)
             button('退出账号', self.logout)
         layout.addLayout(actions)
@@ -158,10 +254,8 @@ class CloudAccountDialog(QDialog):
             self.controls.append(self.conflict_button)
             row.addWidget(self.conflict_button)
             layout.addLayout(row)
-        deploy = QPushButton('复制电脑端同步部署脚本')
-        deploy.clicked.connect(lambda: copy_deployment(self.status))
-        layout.addWidget(deploy)
-        self.details = QLabel('首次使用需部署云端业务表和私有图片桶。已有的登录、测试表及测试桶继续保留。')
+        self.details = QLabel('题库与原图按账号独立保存，在手机和电脑使用同一账号即可同步。')
+        self.details.setObjectName('muted')
         self.details.setWordWrap(True)
         layout.addWidget(self.details)
         layout.addStretch()
@@ -173,7 +267,7 @@ class CloudAccountDialog(QDialog):
 
     def refresh(self):
         if self.window.cloud_session is None:
-            self.status.setText('当前内容只保存在本地。点击“登录账号”打开账号题库。')
+            self.status.setText('当前内容只保存在本地。点击“登录／注册账号”打开账号题库。')
             return
         state = self.local().status()
         self.status.setText(f"待同步：{state['pending']} 道题 · 待处理冲突：{state['conflicts']} 道题\n"
@@ -246,9 +340,26 @@ class CloudAccountDialog(QDialog):
                 ('旧编辑草稿已保存副本，可在“处理同步冲突”中查看副本目录。' if result['archived_drafts'] else ''))
         self.run(lambda: synchronize(local, client), completed)
 
+    def sign_in(self):
+        if not self.window.can_switch_workspace():
+            self.details.setText(self.window.statusBar().currentMessage())
+            return
+        dialog = CloudSignInDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if self.window.switch_workspace(dialog.session):
+                self.accept()
+            else:
+                self.details.setText(self.window.statusBar().currentMessage())
+
     def renew(self):
         dialog = CloudSignInDialog(self, self.window.cloud_session.username, self.window.cloud_session.user_id)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            try:
+                dialog.session.remember(self.window.cloud_root)
+            except RuntimeError as error:
+                dialog.session.close()
+                self.details.setText(str(error))
+                return
             self.window.cloud_session.close()
             self.window.cloud_session = dialog.session
             self.details.setText('登录已更新，可以继续同步。')
@@ -256,10 +367,10 @@ class CloudAccountDialog(QDialog):
     def logout(self):
         if self.worker is not None:
             return
-        self.accept()
-        # The process keeps one immutable workspace until it has closed its jobs.
-        if self.window.close():
-            self.window.cloud_session.close()
+        if self.window.switch_workspace(None, logout=True):
+            self.accept()
+        else:
+            self.details.setText(self.window.statusBar().currentMessage())
 
     def import_local(self):
         source = self.window.cloud_root

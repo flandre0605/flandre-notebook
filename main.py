@@ -26,6 +26,13 @@ def main() -> int:
     guest_root = user_data_dir()
     session = None
     workspace_lock = None
+    login_notice = ''
+    if '--cloud' not in sys.argv and not verify_output:
+        from app.services.cloud_session_store import CloudSessionStore
+        try:
+            session = CloudSessionStore(guest_root).load_last()
+        except RuntimeError as error:
+            login_notice = str(error)
     if '--cloud' in sys.argv:
         if '--workspace-root' in sys.argv:
             index = sys.argv.index('--workspace-root')
@@ -48,6 +55,9 @@ def main() -> int:
         if login.exec() != QDialog.DialogCode.Accepted:
             return 0
         session = login.session
+    if session:
+        from app.services.cloud_accounts import account_directory
+        from PySide6.QtCore import QLockFile
         try:
             directory = account_directory(guest_root, session.user_id)
             directory.mkdir(parents=True, exist_ok=True)
@@ -56,6 +66,10 @@ def main() -> int:
                 QMessageBox.information(None, '账号题库已打开', '此账号的题库窗口已打开，请从任务栏切换到该窗口。')
                 session.close()
                 return 0
+            try:
+                session.remember(guest_root)
+            except RuntimeError as error:
+                login_notice = str(error)
             # Set paths before importing any store/attachment/UI services.
             os.environ['FLANDRE_DATA_DIR'] = str(directory)
             from app import paths
@@ -79,18 +93,20 @@ def main() -> int:
             session.close()
         QMessageBox.critical(None, "无法打开学习数据", f"{error}\n\n请检查数据目录或备份后再启动。")
         return 1
-    window = MainWindow(cloud_session=session, cloud_root=guest_root)
+    window = MainWindow(cloud_session=session, cloud_root=guest_root, cloud_lock=workspace_lock)
     window.show()
-    if startup_notice:
-        window.statusBar().showMessage(startup_notice, 15000)
+    if startup_notice or login_notice:
+        window.statusBar().showMessage('\n'.join(filter(None, (startup_notice, login_notice))), 15000)
     if verify_output:
         from app.services.runtime_check import verify_package
         return verify_package(app, window, verify_output)
     result = app.exec()
     from PySide6.QtCore import QThreadPool
     QThreadPool.globalInstance().waitForDone()
-    if session:
+    if window.cloud_session:
         window.cloud_session.close()
+    if window.cloud_lock:
+        window.cloud_lock.unlock()
     return result
 
 

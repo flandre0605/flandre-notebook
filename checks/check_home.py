@@ -9,7 +9,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 from app.database import store, vocabulary
 from app.ui.main_window import MainWindow
 
@@ -31,6 +31,22 @@ def check(preview=None):
             QTest.qWait(220)
             assert window.page_stack.currentWidget() is window._pages["home"]
             assert "还没有学习内容" in window.home_reminder.text()
+            assert all(label.text() == '0' for label in window.home_stats.values())
+            assert store.list_questions() == [] and vocabulary.list_words() == []
+            if preview:
+                assert window.grab().save(str(preview.with_name('desktop-home-empty.png')))
+            window.show_library()
+            QTest.qWait(220)
+            assert window.table.rowCount() == 0 and window.empty_title.isVisible()
+            if preview:
+                assert window.grab().save(str(preview.with_name('desktop-library-empty.png')))
+            window.show_vocabulary()
+            assert not any('示例' in button.text() for button in window.findChildren(QPushButton))
+            from app.ui.cloud_account_dialog import CloudSignInDialog, CloudAccountDialog
+            for dialog in (CloudSignInDialog(window), CloudAccountDialog(window)):
+                assert not any('部署' in button.text() for button in dialog.findChildren(QPushButton))
+                dialog.deleteLater()
+            window.show_home()
             for size in ((1040, 680), (1280, 820)):
                 window.resize(*size)
                 QTest.qWait(220)
@@ -53,9 +69,9 @@ def check(preview=None):
             assert window.home_stats["words"].text() == "1" and "1 个新词" in window.home_reminder.text()
             assert any(button.objectName() == "navButtonActive" and key == "home"
                        for button, key in window._navigation_buttons)
-            if preview:
-                QTest.qWait(230)
-                assert window.grab().save(str(preview))
+            for name in ('question_template.csv', 'vocabulary_template.csv'):
+                assert len((Path(__file__).resolve().parents[1] / 'assets' / name).read_text(encoding='utf-8').splitlines()) == 1
+            assert not (Path(__file__).resolve().parents[1] / 'assets/vocabulary_template.txt').read_bytes()
             window.close()
     print("PASS: default functional home, empty/updated counts, all feature routes, sidebar and small layout")
 

@@ -27,6 +27,7 @@ public final class MainActivity extends Activity {
     PhoneUi ui;
     boolean busy=false;
     String location="home";
+    long nextRegistrationCode=0;
     private String cameraName,cameraUid;
     private byte[] original;
     private String extension,sourceName;
@@ -43,8 +44,9 @@ public final class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         if(Build.VERSION.SDK_INT>=33)getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::handleBack);
         if(saved!=null){cameraName=saved.getString("camera_name");cameraUid=saved.getString("camera_uid");}
-        try {openWorkspace(getPreferences(0).getString("offline_uid","LOCAL"));screens=new NotebookScreens(this);home();}catch(Exception e){screen("无法打开题库","请保留应用数据，不要卸载。可重新启动后再试。");}
+        try {openWorkspace(getPreferences(0).getString("offline_uid","LOCAL"));screens=new NotebookScreens(this);home();restoreLogin();}catch(Exception e){screen("无法打开题库","请保留应用数据，不要卸载。可重新启动后再试。");}
     }
+    void restoreLogin(){try{api=new CloudLoginStore(this).load(book.uid);}catch(IOException error){status(error.getMessage());}}
     protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("camera_name",cameraName);out.putString("camera_uid",cameraUid);}
     int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
     void screen(String title,String hint){
@@ -64,21 +66,48 @@ public final class MainActivity extends Activity {
         });
     }
     void loginPage(){
+        screens.page("账号登录","登录你的学习空间，在手机和电脑继续学习。",screens::account);
         location="login";
-        screen("账号登录","使用和电脑相同的普通账号同步。登录前的本机题库保留，可在账号页选择导入。");
         EditText username=edit("用户名",false),password=edit("密码",true);
         username.setText(getPreferences(0).getString("username",""));
         primary("登录",()->{
             String name=username.getText().toString().trim(),secret=password.getText().toString();password.setText("");
             if(name.isEmpty()||secret.isEmpty()){status("请填写用户名和密码。");return;}
-            String device=getPreferences(0).getString("device","");if(device.isEmpty()){device=CloudApi.id();getPreferences(0).edit().putString("device",device).apply();}
-            final String deviceId=device;run(()->CloudApi.login(name,secret,deviceId),value->{
-                CloudApi signed=(CloudApi)value;try{openWorkspace(signed.uid);}catch(Exception error){signed.close();throw new IOException("账号题库未能打开，原本机题库仍保留。");}if(api!=null)api.close();api=signed;
-                getPreferences(0).edit().putString("username",name).putString("offline_uid",api.uid).apply();home();
-            });
+            final String deviceId=cloudDevice();run(()->CloudApi.login(name,secret,deviceId),value->acceptAccount((CloudApi)value,name));
         });
-        button("返回本机题库",this::home);
-        text("密码和登录凭据不保存。重启后可继续上次题库的离线学习；云端同步需重新登录。退出账号会关闭该账号的离线入口。",13,false);
+        button("没有账号？注册新账号",this::registerPage);
+        button("返回题库",this::home);
+        text("密码不保存。系统加密保存登录状态，重启后仍可同步；退出账号会清除登录状态，本地题库保留。",13,false);
+    }
+    String cloudDevice(){String device=getPreferences(0).getString("device","");if(device.isEmpty()){device=CloudApi.id();getPreferences(0).edit().putString("device",device).apply();}return device;}
+    void acceptAccount(CloudApi signed,String name) throws IOException {
+        try{openWorkspace(signed.uid);}catch(Exception error){signed.close();throw new IOException("账号已认证，但题库未能打开。原本机题库保留，请重新登录。");}if(api!=null)api.close();api=signed;
+        getPreferences(0).edit().putString("username",name).putString("offline_uid",api.uid).commit();
+        api.store=new CloudLoginStore(this);home();try{api.store.save(api);}catch(IOException error){status(error.getMessage());}
+    }
+    void registerPage(){
+        screens.page("注册账号","验证邮箱后，在手机和电脑使用同一用户名登录。",this::loginPage);location="registration";
+        text("邮箱",14,true);EditText email=edit("接收验证码的邮箱",false);email.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);email.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(254)});
+        final CloudApi.EmailChallenge[] challenge={null};
+        Button send=button("发送邮箱验证码",()->{
+            long now=SystemClock.elapsedRealtime();if(now<nextRegistrationCode){status("请等待 "+((nextRegistrationCode-now+999)/1000)+" 秒后再发送。");return;}
+            final String address;try{address=CloudApi.registrationFields(email.getText().toString(),null,null);}catch(IOException error){status(error.getMessage());return;}
+            challenge[0]=null;nextRegistrationCode=now+60000;final String device=cloudDevice();
+            run(()->CloudApi.sendRegistrationCode(address,device),value->{challenge[0]=(CloudApi.EmailChallenge)value;status("验证码已发送，请检查收件箱和垃圾邮件。修改邮箱后需重新发送。");});
+        });
+        // A monotonic cooldown also survives switching between login and registration pages.
+        Handler timer=new Handler(Looper.getMainLooper());timer.postDelayed(new Runnable(){public void run(){if(isDestroyed()||!send.isAttachedToWindow())return;long remaining=nextRegistrationCode-SystemClock.elapsedRealtime();send.setText(remaining>0?((remaining+999)/1000)+" 秒后可重新发送":"发送邮箱验证码");timer.postDelayed(this,1000);}},100);
+        text("邮箱验证码",14,true);EditText code=edit("邮件中的 6 位数字",false);code.setInputType(InputType.TYPE_CLASS_NUMBER);code.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(6)});code.setSaveEnabled(false);code.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
+        text("用户名",14,true);EditText username=edit("5～24 位字母、数字、_ 或 -",false);username.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(24)});
+        text("密码",14,true);EditText password=edit("8～32 位，含字母和数字",true);
+        text("确认密码",14,true);EditText confirm=edit("再次输入密码",true);
+        primary("注册并进入题库",()->{
+            String address=email.getText().toString().trim(),name=username.getText().toString().trim(),secret=password.getText().toString(),verification=code.getText().toString().trim();
+            try{CloudApi.registrationFields(address,name,secret);if(!secret.equals(confirm.getText().toString()))throw new IOException("两次密码不一致。");if(challenge[0]==null)throw new IOException("请先发送邮箱验证码。");}catch(IOException error){status(error.getMessage());return;}
+            password.setText("");confirm.setText("");code.setText("");CloudApi.EmailChallenge current=challenge[0];final String device=cloudDevice();run(()->current.signup(address,name,secret,verification,device),value->acceptAccount((CloudApi)value,name));
+        });
+        button("已有账号？返回登录",this::loginPage);
+        text("密码和验证码不保存。系统加密保存登录状态。注册不会自动上传本机题库；登录后可选择导入和同步。",13,false);
     }
     void openWorkspace(String uid) throws Exception {
         PhotoQueue nextQueue=new PhotoQueue(new File(getFilesDir(),uid.equals("LOCAL")?"local":"accounts"),uid);Notebook next=new Notebook(nextQueue.root,uid);if(book!=null)book.close();queue=nextQueue;book=next;
@@ -179,5 +208,5 @@ public final class MainActivity extends Activity {
         clearPhoto();home();
     }
     public void onBackPressed(){handleBack();}
-    protected void onDestroy(){super.onDestroy();if(screens!=null)screens.close();if(api!=null)api.close();Notebook current=book;if(current!=null)executor.execute(current::close);executor.shutdown();}
+    protected void onDestroy(){super.onDestroy();if(screens!=null)screens.close();CloudApi session=api;Notebook current=book;executor.execute(()->{if(session!=null)session.close();if(current!=null)current.close();});executor.shutdown();}
 }
