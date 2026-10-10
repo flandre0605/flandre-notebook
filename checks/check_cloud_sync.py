@@ -345,6 +345,21 @@ class SyncTests(unittest.TestCase):
         with self.local.connection() as db:
             self.assertEqual(db.execute('SELECT count(*) FROM questions').fetchone()[0], 0)
 
+    def test_import_keeps_shared_original_images(self):
+        qid = self.question(self.guest, image=True)
+        with self.active(self.guest):
+            image = store.list_attachments(qid)[0]
+            second = store.save_question({'stem': 'same paper, another question'})
+            store.add_attachment(second, image['relative_path'], image['original_name'], image['mime_type'])
+        self.assertEqual(self.local.import_guest(self.guest)['imported'], 2)
+        with self.local.connection() as db:
+            self.assertEqual(db.execute('SELECT count(DISTINCT relative_path) FROM attachments').fetchone()[0], 1)
+        synchronize(self.local, self.client)
+        synchronize(self.second, self.client)
+        with self.second.connection() as db:
+            self.assertEqual(db.execute('SELECT count(*) FROM attachments').fetchone()[0], 2)
+            self.assertEqual(db.execute('SELECT count(DISTINCT relative_path) FROM attachments').fetchone()[0], 1)
+
     def test_account_backup_contains_frozen_operations_and_staged_images(self):
         self.question(image=True)
         pending = self.local.prepare()

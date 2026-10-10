@@ -13,6 +13,7 @@ from PySide6.QtGui import QImageReader
 
 from app.prompts import QUESTION_RECOGNITION_SYSTEM, QUESTION_RECOGNITION_USER
 from app.services.credentials import get_api_key
+from app.services.cloudbase_login import _NoRedirect
 from app.question_data import validate_question
 
 MAX_API_IMAGE_EDGE = 2560
@@ -158,11 +159,14 @@ def list_models(profile, api_key: str | None = None) -> list[str]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(
+        with urllib.request.build_opener(_NoRedirect()).open(
             request, timeout=max(1, min(int(profile["timeout_seconds"]), 300))
         ) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
+        error.close()
+        if error.code in {301, 302, 303, 307, 308}:
+            raise ProviderError("模型接口要求跳转，请填写最终接口地址，未转发 API Key。") from None
         messages = {
             401: "获取模型列表失败：鉴权失败，请检查 API Key。",
             403: "获取模型列表失败：服务拒绝访问。",
@@ -216,12 +220,16 @@ def _request(profile, messages, max_tokens=1200, json_mode=False) -> str:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(
+        with urllib.request.build_opener(_NoRedirect()).open(
             request, timeout=max(1, min(int(profile["timeout_seconds"]), 300))
         ) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
-        error_body = error.read(2000).decode("utf-8", errors="replace").lower()
+        if error.code in {301, 302, 303, 307, 308}:
+            error.close()
+            raise ProviderError("模型接口要求跳转，请填写最终接口地址，未转发 API Key。") from None
+        with error:
+            error_body = error.read(2000).decode("utf-8", errors="replace").lower()
         if (error.code in {401, 503} and any(marker in error_body for marker in (
                 "no tokens available", "no auth token. add via dashboard"))
                 and urllib.parse.urlsplit(url).hostname in {"localhost", "127.0.0.1", "::1"}):

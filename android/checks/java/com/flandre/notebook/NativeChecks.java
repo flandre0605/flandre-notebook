@@ -41,6 +41,7 @@ public final class NativeChecks extends Instrumentation {
     public void onStart(){
         Bundle result=new Bundle();Activity activity=null;
         try {
+            if(restartMode.equals("portable_exchange")){new NotebookChecks(this).portableFiles();portableResults(result);result.putString("stream","PASS: Android portable exchange ("+passed+" checks)\n");finish(Activity.RESULT_OK,result);return;}
             if(!restartMode.isEmpty()){restartSession();result.putString("stream","PASS: Android process restart "+restartMode+" ("+passed+" checks)\n");finish(Activity.RESULT_OK,result);return;}
             registration();sessions();
             NotebookChecks notebookChecks=new NotebookChecks(this);notebookChecks.run();
@@ -90,9 +91,13 @@ public final class NativeChecks extends Instrumentation {
             emptyProductUi((MainActivity)activity);
             notebookChecks.ui(activity);
             result.putString("stream","PASS: "+passed+" Android independent notebook, sync, backup, recognition, formulas, learning and legacy queue assertions\n");
+            portableResults(result);
             finish(Activity.RESULT_OK,result);
         }catch(Throwable error){result.putString("stream","FAIL: "+error.toString()+"\n");finish(Activity.RESULT_CANCELED,result);}
         finally{if(activity!=null){final Activity current=activity;runOnMainSync(current::finish);}}
+    }
+    void portableResults(Bundle result) throws IOException {
+        File exports=new File(getTargetContext().getCacheDir(),"portable-exchange");for(String suffix:new String[]{"json","csv"})result.putString("portable_"+suffix,android.util.Base64.encodeToString(CloudApi.read(new File(exports,"phone."+suffix),QuestionFiles.MAX_BYTES),android.util.Base64.NO_WRAP));
     }
     void restartSession() throws Exception {
         MainActivity main=(MainActivity)startActivitySync(new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

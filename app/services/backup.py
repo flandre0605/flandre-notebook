@@ -28,32 +28,31 @@ def create_backup(destination: str | Path, data_dir: Path | None = None) -> Path
             file.is_symlink() or not file.resolve().is_relative_to(images_root.resolve()) for file in images_root.rglob('*'))):
         raise ValueError('图片目录包含外部链接，未备份，请先整理目录。')
     destination = Path(destination)
+    if destination.resolve() == database_path.resolve() or destination.resolve().is_relative_to(images_root.resolve()):
+        raise ValueError('备份不能覆盖题库或保存到图片目录。')
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="mistakebook-backup-") as temporary:
-        database_copy = Path(temporary) / "questions.db"
-        with closing(sqlite3.connect(database_path.resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(
-            sqlite3.connect(database_copy)
-        ) as target:
-            source.backup(target)
-        with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.write(database_copy, "database.sqlite3")
-            if images_root.exists():
-                for file in images_root.rglob("*"):
-                    if file.is_file():
-                        archive.write(
-                            file,
-                            f"attachments/{file.relative_to(images_root).as_posix()}",
-                        )
-            archive.writestr(
-                "manifest.json",
-                json.dumps(
-                    {
-                        "format": 1,
-                        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                    },
-                    ensure_ascii=False,
-                ),
-            )
+    descriptor, name = tempfile.mkstemp(prefix='.flandre-backup-', suffix='.zip', dir=destination.parent)
+    os.close(descriptor)
+    archive_path = Path(name)
+    try:
+        with tempfile.TemporaryDirectory(prefix="mistakebook-backup-") as temporary:
+            database_copy = Path(temporary) / "questions.db"
+            with closing(sqlite3.connect(database_path.resolve().as_uri() + '?mode=ro', uri=True)) as source, closing(
+                sqlite3.connect(database_copy)
+            ) as target:
+                source.backup(target)
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.write(database_copy, "database.sqlite3")
+                if images_root.exists():
+                    for file in images_root.rglob("*"):
+                        if file.is_file():
+                            archive.write(file, f"attachments/{file.relative_to(images_root).as_posix()}")
+                archive.writestr('manifest.json', json.dumps({
+                    'format': 1, 'created_at': datetime.now().astimezone().isoformat(timespec='seconds'),
+                }, ensure_ascii=False))
+        os.replace(archive_path, destination)
+    finally:
+        archive_path.unlink(missing_ok=True)
     return destination
 
 

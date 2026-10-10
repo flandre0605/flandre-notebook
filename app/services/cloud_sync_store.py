@@ -181,7 +181,7 @@ class SyncStore:
         if record['deleted']:
             return record, files
         for image in record['payload']['attachments']:
-            relative = f"attachments/cloud/{image['id']}-{image['sha256']}{Path(image['key']).suffix}"
+            relative = f"attachments/cloud/{image['sha256']}{Path(image['key']).suffix}"
             target = (self.root / relative).resolve()
             if not target.is_relative_to(self.root) or not target.is_relative_to((self.root / 'attachments').resolve()):
                 raise ValueError('账号图片目录包含外部链接，未同步。')
@@ -341,6 +341,7 @@ class SyncStore:
         archive_path = self.root / 'imports' / ('local-before-import-' + uuid4().hex + '.zip')
         create_backup(archive_path, source_root)
         copied = []
+        images = {}
         count = 0
         try:
             with tempfile.TemporaryDirectory(prefix='flandre-import-') as temporary, zipfile.ZipFile(archive_path) as archive:
@@ -359,15 +360,18 @@ class SyncStore:
                             relative = image['relative_path']
                             if not isinstance(relative, str) or not re.fullmatch(r'attachments/[A-Za-z0-9_./-]+', relative) or '..' in Path(relative).parts:
                                 raise ValueError('本地附件路径无效，导入已回滚。')
-                            content = archive.read(relative)
-                            destination = self.root / 'attachments' / (uuid4().hex + Path(relative).suffix.lower())
-                            if not destination.resolve().is_relative_to(self.root):
-                                raise ValueError('账号图片目录包含外部链接。')
-                            destination.parent.mkdir(parents=True, exist_ok=True)
-                            copied.append(destination)
-                            destination.write_bytes(content)
-                            from app.services.attachments import validate_image
-                            validate_image(destination)
+                            if relative not in images:
+                                content = archive.read(relative)
+                                destination = self.root / 'attachments' / (uuid4().hex + Path(relative).suffix.lower())
+                                if not destination.resolve().is_relative_to(self.root):
+                                    raise ValueError('账号图片目录包含外部链接。')
+                                destination.parent.mkdir(parents=True, exist_ok=True)
+                                copied.append(destination)
+                                destination.write_bytes(content)
+                                from app.services.attachments import validate_image
+                                validate_image(destination)
+                                images[relative] = destination
+                            destination = images[relative]
                             db.execute('INSERT INTO attachments(question_id,relative_path,original_name,mime_type) VALUES(?,?,?,?)',
                                        (qid, 'attachments/' + destination.name, image['original_name'], image['mime_type']))
                         review = source.execute('SELECT * FROM review_state WHERE question_id=?', (old['id'],)).fetchone()

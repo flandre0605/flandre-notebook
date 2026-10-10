@@ -71,7 +71,7 @@ class ProfilesDialog(QDialog):
         self.new_button.clicked.connect(self._new)
         self.save_button.clicked.connect(self._save)
         self.delete_button.clicked.connect(self._delete)
-        self.web_start_button = AnimatedButton("启动网页版服务")
+        self.web_start_button = AnimatedButton("启用 DeepSeek 网页版" if deepseek_web.BUNDLED_SERVICE.is_file() else "启动网页版服务")
         self.web_start_button.clicked.connect(self._start_web)
         self.web_manage_button = AnimatedButton("打开管理页")
         self.web_manage_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(deepseek_web.ORIGIN)))
@@ -180,7 +180,7 @@ class ProfilesDialog(QDialog):
         data_hint.setObjectName("muted")
         data_hint.setWordWrap(True)
         data_layout.addWidget(data_hint)
-        bridge_location = QLabel(f"网页版服务目录：{deepseek_web.BRIDGE}\n此独立服务不包含在题库备份中。")
+        bridge_location = QLabel(f"网页版账号与日志目录：{deepseek_web.BRIDGE}\n账号信息不进入题库备份。")
         bridge_location.setWordWrap(True)
         bridge_location.setObjectName("muted")
         bridge_location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -200,7 +200,7 @@ class ProfilesDialog(QDialog):
 
     def _start_web(self):
         self.web_start_button.setEnabled(False)
-        self.connection_status.setText("正在启动本地服务…")
+        self.connection_status.setText("正在启用内置服务…" if deepseek_web.BUNDLED_SERVICE.is_file() else "正在启动本地服务…")
         self.web_worker = Worker(deepseek_web.start)
         self.web_worker.signals.succeeded.connect(self._web_started)
         self.web_worker.signals.failed.connect(self._web_failed)

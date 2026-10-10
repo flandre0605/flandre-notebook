@@ -31,6 +31,24 @@ def verify_package(app, window, report_path):
             assert len((PROJECT_ROOT / 'assets' / name).read_text(encoding='utf-8').splitlines()) == 1
         assert not (PROJECT_ROOT / 'assets/vocabulary_template.txt').read_bytes()
         report['empty_product_workspace'] = True
+        from app.services import deepseek_web
+        if report['frozen']:
+            assert deepseek_web.BUNDLED_SERVICE.is_file(), 'Bundled webpage service is missing'
+            saved_bridge, saved_key, saved_remember = deepseek_web.BRIDGE, deepseek_web.local_key, deepseek_web._remember_bridge
+            import secrets
+            synthetic_key = secrets.token_urlsafe(32)
+            deepseek_web.BRIDGE = root / 'bundled-web-check'
+            deepseek_web.local_key = lambda: synthetic_key
+            deepseek_web._remember_bridge = lambda: None
+            try:
+                assert deepseek_web.start() == synthetic_key
+                import sqlite3
+                with sqlite3.connect(deepseek_web.BRIDGE / 'deeperseeker.db') as database:
+                    assert database.execute('SELECT COUNT(*) FROM tokens').fetchone()[0] == 0
+                report['bundled_web_service'] = True
+            finally:
+                deepseek_web.stop()
+                deepseek_web.BRIDGE, deepseek_web.local_key, deepseek_web._remember_bridge = saved_bridge, saved_key, saved_remember
         for script in ('004_desktop_sync.sql','005_mobile_inbox.sql'):
             assert (PROJECT_ROOT / 'cloud/sql' / script).is_file(), script
         from app.ui.mobile_inbox_dialog import MobileInboxDialog
@@ -61,6 +79,12 @@ def verify_package(app, window, report_path):
         for expression in ("happy", "thinking", "sad", "sleepy", "surprised"):
             sprite = QImage(str(PROJECT_ROOT / "assets" / "pet_expressions" / f"{expression}.png"))
             assert not sprite.isNull() and sprite.hasAlphaChannel(), expression
+        for filename, aspect in (("pet_walk_user.png", 1024 / 765), ("pet_motion.png", 2)):
+            motion = QImage(str(PROJECT_ROOT / "assets" / filename))
+            assert not motion.isNull() and motion.hasAlphaChannel() and abs(motion.width() - motion.height() * aspect) <= 2
+        from app.ui.pet_walk import walking_frames, WALK_FRAMES
+        assert len(walking_frames(PROJECT_ROOT / "assets/pet_walk_user.png")) == WALK_FRAMES
+        report["pet_motion_frames"] = True
         credentials._require_secure_backend()  # Discover the backend without reading or writing a credential.
         report["credential_backend"] = type(credentials.keyring.get_keyring()).__name__
         from app.ui.profiles_dialog import ProfilesDialog

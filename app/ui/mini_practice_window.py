@@ -1,13 +1,16 @@
 from pathlib import Path
+import math
+import random
 
-from PySide6.QtCore import QEvent, QSize, Qt, Signal, QTimer
-from PySide6.QtGui import QGuiApplication, QIcon, QKeySequence, QShortcut
+from PySide6.QtCore import QEasingCurve, QEvent, QPoint, QPropertyAnimation, QSize, Qt, Signal, QTimer
+from PySide6.QtGui import QGuiApplication, QIcon, QKeySequence, QPixmap, QShortcut, QTransform
 from PySide6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QSizeGrip, QVBoxLayout, QWidget,
 )
 
 from app.ui.motion import AnimatedButton
+from app.ui.pet_walk import WALK_FRAME_MS, WALK_FRAMES, WALK_STRIDE, walking_frames
 from app.ui.theme import STYLE
 
 
@@ -39,6 +42,16 @@ class MiniPracticeWindow(QWidget):
         self._hovered = False
         self._sleeping = False
         self._practice = practice
+        self._collapsed_anchor = None
+        self._expanded_origin = None
+        self._selected = False
+        self._has_landed = False
+        self._motion_mode = None
+        self._movement = QPropertyAnimation(self, b"pos", self)
+        self._movement.finished.connect(self._motion_finished)
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.timeout.connect(self._wander)
         self._sleep_timer = QTimer(self)
         self._sleep_timer.setSingleShot(True)
         self._sleep_timer.setInterval(45000)
@@ -60,6 +73,24 @@ class MiniPracticeWindow(QWidget):
                                     else f"pet_expressions/{name}.png")))
             for name in PET_EXPRESSIONS
         }
+        self._motion_icons = {}
+        walk = walking_frames(assets / "pet_walk_user.png")
+        if walk:
+            self._motion_icons["walk", False] = [QIcon(frame) for frame in walk]
+            self._motion_icons["walk", True] = [QIcon(frame.transformed(QTransform().scale(-1, 1))) for frame in walk]
+        for mode, filename, columns, rows, first, count in (
+            ("fly", "pet_motion.png", 4, 2, 4, 4),
+        ):
+            sheet = QPixmap(str(assets / filename))
+            if sheet.isNull():
+                continue
+            width, height = sheet.width() // columns, sheet.height() // rows
+            frames = [sheet.copy(index % columns * width, index // columns * height, width, height)
+                      for index in range(first, first + count)]
+            self._motion_icons[mode, False] = [QIcon(frame) for frame in frames]
+            self._motion_icons[mode, True] = [QIcon(frame.transformed(QTransform().scale(-1, 1))) for frame in frames]
+        self._facing_left = False
+        self._movement.valueChanged.connect(lambda _: self._render_pet())
         self._expression = None
         self.pet_button.setIconSize(QSize(144, 156))
         self.pet_button.setFixedSize(156, 168)
@@ -148,52 +179,194 @@ class MiniPracticeWindow(QWidget):
             expression = "idle"
         if expression != self._expression:
             self._expression = expression
-            icon = self._pet_icons[expression]
-            self.pet_button.setIcon(icon if not icon.isNull() else self._pet_icons["idle"])
+        self._render_pet()
         self._sleep_timer.stop()
         if self._collapsed and not self._hovered and self._drag_origin is None and not self._sleeping:
             self._sleep_timer.start()
 
+    def _render_pet(self):
+        if not hasattr(self, "_motion_icons"):
+            return
+        mode = "fly" if self._motion_mode == "fall" else self._motion_mode
+        frames = self._motion_icons.get((mode, self._facing_left))
+        if frames:
+            interval = WALK_FRAME_MS if mode == "walk" else 120
+            self.pet_button.setIcon(frames[(self._movement.currentTime() // interval) % len(frames)])
+        else:
+            icon = self._pet_icons[self._expression or "idle"]
+            self.pet_button.setIcon(icon if not icon.isNull() else self._pet_icons["idle"])
+
     def _fall_asleep(self):
         if self._collapsed and not self._hovered and self._drag_origin is None:
+            self._stop_motion()
             self._sleeping = True
             self._refresh_expression()
+            self._resume_motion()
+
+    def collapsed_position(self):
+        if self._collapsed:
+            return self.pos()
+        if self._collapsed_anchor is not None:
+            return (self._collapsed_anchor + self.pos() - self._expanded_origin
+                    + QPoint(self.width() - self._expanded_size.width(), 0))
+        return self.pos() + QPoint(self.width() - 172, 0)
+
+    def place_pet(self, position):
+        self._collapsed_anchor = QPoint(position)
+        self._expanded_size = self.size()
+        area = (QGuiApplication.screenAt(position + QPoint(86, 90)) or self.screen()).availableGeometry()
+        self.move(self._bounded_position(position + QPoint(172 - self.width(), 0), area))
+        self._expanded_origin = self.pos()
+        self._has_landed = True
 
     def toggle_collapsed(self):
-        anchor = self.geometry().topRight()
+        self._stop_motion()
         if not self._collapsed:
+            position = self.collapsed_position()
             self._expanded_size = self.size()
             self.panel.hide()
             self.setMinimumSize(172, 180)
             self.resize(172, 180)
+            self.move(position)
         else:
+            self._collapsed_anchor = self.pos()
             self.panel.show()
             self.setMinimumSize(440, 420)
             self.resize(self._expanded_size)
+            self.move(self._collapsed_anchor + QPoint(172 - self.width(), 0))
+            self._has_landed = True
         self._collapsed = not self._collapsed
         self._sleeping = False
         self._refresh_expression()
-        self.move(anchor.x() - self.width() + 1, anchor.y())
         self._keep_on_screen()
+        if not self._collapsed:
+            self._expanded_origin = self.pos()
+        self._resume_motion()
+
+    def _available_geometry(self):
+        screen = QGuiApplication.screenAt(self.pet_button.mapToGlobal(self.pet_button.rect().center())) or self.screen()
+        return screen.availableGeometry()
+
+    def _bounded_position(self, position, available=None):
+        available = available if available is not None else self._available_geometry()
+        return QPoint(
+            max(available.left(), min(position.x(), available.right() - self.width() + 1)),
+            max(available.top(), min(position.y(), available.bottom() - self.height() + 1)),
+        )
 
     def _keep_on_screen(self):
-        screen = QGuiApplication.screenAt(self.pet_button.mapToGlobal(self.pet_button.rect().center())) or self.screen()
-        available = screen.availableGeometry()
-        self.move(
-            max(available.left(), min(self.x(), available.right() - self.width() + 1)),
-            max(available.top(), min(self.y(), available.bottom() - self.height() + 1)),
-        )
+        self.move(self._bounded_position(self.pos()))
+
+    def _stop_motion(self):
+        self._movement.stop()
+        self._idle_timer.stop()
+        self._motion_mode = None
+        self._render_pet()
+
+    def _can_move(self):
+        return (self._practice is not None and self.isVisible() and self._collapsed
+                and not self._selected and not self._hovered and self._drag_origin is None)
+
+    def _resume_motion(self):
+        if not self._can_move() or self._motion_mode is not None:
+            return
+        if self._sleeping:
+            self._idle_timer.start(15000)
+        else:
+            ground = self._bounded_position(QPoint(self.x(), self._available_geometry().bottom() - self.height() - 11))
+            if not self._has_landed or self.y() != ground.y():
+                self._animate("fall", [(0, self.pos()), (1, ground)], 1000, QEasingCurve.Type.OutBounce)
+            else:
+                self._idle_timer.start(random.randint(6000, 10000))
+
+    def _animate(self, mode, points, duration, easing=QEasingCurve.Type.Linear):
+        self._movement.stop()
+        self._idle_timer.stop()
+        self._motion_mode = mode
+        self._facing_left = points[-1][1].x() < points[0][1].x()
+        self._movement.setKeyValues(points)
+        self._movement.setDuration(duration)
+        self._movement.setEasingCurve(easing)
+        self._movement.start()
+        self._render_pet()
+
+    def _motion_finished(self):
+        self._has_landed = True
+        self._motion_mode = None
+        self._render_pet()
+        self._keep_on_screen()
+        self._resume_motion()
+
+    def _wander(self):
+        if not self._can_move() or self._motion_mode is not None:
+            return
+        if self._sleeping:
+            self._sleeping = False
+            self._refresh_expression()
+        area = self._available_geometry()
+        start = self.pos()
+        ground = self._bounded_position(QPoint(start.x(), area.bottom() - self.height() - 11), area)
+        if start.y() != ground.y():
+            self._resume_motion()
+            return
+        flying = random.choice((False, True))
+        distance = random.choice((-1, 1)) * random.randint(100, 240)
+        target = self._bounded_position(start + QPoint(distance, 0), area)
+        if target.x() == start.x():
+            target = self._bounded_position(start - QPoint(distance, 0), area)
+        if target.x() == start.x() and not flying:
+            self._resume_motion()
+            return
+        if flying:
+            target.setY(self._bounded_position(QPoint(target.x(), area.bottom() - self.height() - 11), area).y())
+        points = [(0, start), (1, target)]
+        if flying:
+            height = random.randint(100, 240)
+            points = []
+            for frame in range(21):
+                progress = frame / 20
+                x = start.x() + (target.x() - start.x()) * progress
+                y = start.y() + (target.y() - start.y()) * progress - math.sin(math.pi * progress) * height
+                points.append((progress, self._bounded_position(QPoint(round(x), round(y)), area)))
+        # Keep the illustrated step cycle and window movement on the same clock.
+        cycle = WALK_FRAME_MS * WALK_FRAMES
+        duration = 2600 if flying else max(1, round(abs(target.x() - start.x()) / WALK_STRIDE * cycle))
+        self._animate("fly" if flying else "walk", points, duration)
+
+    def event(self, event):
+        result = super().event(event)
+        if hasattr(self, "_movement"):
+            if event.type() == QEvent.Type.WindowActivate:
+                self._selected = True
+                self._stop_motion()
+            elif event.type() == QEvent.Type.WindowDeactivate:
+                self._selected = False
+                self._resume_motion()
+        return result
+
+    def hideEvent(self, event):
+        self._stop_motion()
+        self._sleep_timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_expression()
+        self._resume_motion()
 
     def eventFilter(self, watched, event):
         if watched in (self.pet_button, self.header):
             if event.type() == QEvent.Type.Enter and watched is self.pet_button:
+                self._stop_motion()
                 self._hovered = True
                 self._sleeping = False
                 self._refresh_expression()
             elif event.type() == QEvent.Type.Leave and watched is self.pet_button:
                 self._hovered = False
                 self._refresh_expression()
+                self._resume_motion()
             if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self._stop_motion()
                 self._drag_origin = event.globalPosition().toPoint()
                 self._window_origin = self.pos()
                 self._dragged = False
@@ -213,9 +386,12 @@ class MiniPracticeWindow(QWidget):
                 if self._drag_origin is not None:
                     clicked = not self._dragged
                     self._drag_origin = None
+                    if self._dragged:
+                        self._has_landed = True
                     self._refresh_expression()
                     if clicked and watched is self.pet_button:
                         self.toggle_collapsed()
+                    self._resume_motion()
                     return True
             if event.type() == QEvent.Type.ContextMenu and watched is self.pet_button:
                 self.restore_requested.emit()
@@ -223,6 +399,7 @@ class MiniPracticeWindow(QWidget):
         return super().eventFilter(watched, event)
 
     def _set_pinned(self, pinned):
+        self._stop_motion()
         geometry = self.geometry()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, pinned)
         self.pin_button.setText("已置顶" if pinned else "置顶")
@@ -233,6 +410,7 @@ class MiniPracticeWindow(QWidget):
         self.setGeometry(geometry)
 
     def take_practice(self):
+        self._stop_motion()
         self._sleep_timer.stop()
         self._practice.content_changed.disconnect(self._refresh_expression)
         self._practice.user_answer.textChanged.disconnect(self._refresh_expression)

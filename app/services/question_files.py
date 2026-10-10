@@ -45,7 +45,9 @@ def read_questions(path):
         except RecursionError as error:
             raise ValueError("JSON 嵌套过深，请使用普通题目列表。") from error
         if isinstance(payload, dict):
-            if payload.get("format") != "flandre-questions" or payload.get("version") != 1:
+            if ("format" in payload or "version" in payload) and (
+                payload.get("format") != "flandre-questions" or payload.get("version") != 1
+            ):
                 raise ValueError("不支持此题库文件版本。")
             payload = payload.get("questions")
     else:

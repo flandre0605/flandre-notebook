@@ -4,16 +4,37 @@ Usage: python scripts/build_android.py --sdk PATH --java-home PATH
 The SDK needs platforms/android-35 and build-tools/35.0.0. No server credentials.
 """
 import argparse
+import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import zipfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def signing_key():
+    key = Path(os.environ['LOCALAPPDATA']) / 'FlandreNotebook/signing/android-preview.keystore'
+    if not key.is_file():
+        legacy = ROOT / 'build/android-preview-debug.keystore'
+        if not legacy.is_file():
+            raise RuntimeError('安卓签名缺失，请恢复已备份的原签名。不会自动生成不同证书，以免无法覆盖安装。')
+        key.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, name = tempfile.mkstemp(dir=key.parent, suffix='.keystore')
+        os.close(descriptor)
+        temporary = Path(name)
+        try:
+            shutil.copy2(legacy, temporary)
+            os.replace(temporary, key)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return key
+
+
 def build(sdk, java_home, checks=False):
+    key = signing_key()
     sdk, java_home = Path(sdk).resolve(), Path(java_home).resolve()
     tools = sdk / 'build-tools/35.0.0'
     library = sdk / 'platforms/android-35/android.jar'
@@ -45,13 +66,6 @@ def build(sdk, java_home, checks=False):
         for path in sorted((work / 'dex').glob('*.dex')):
             apk.write(path, path.name)
     run(tools / 'zipalign.exe', '-f', '-p', '4', work / 'unsigned.apk', work / 'aligned.apk')
-    key = ROOT / 'build/android-preview-debug.keystore'
-    # Development-only signing key, outside tracked source. Preserve across builds
-    # so installing a newer preview does not require deleting private phone data.
-    if not key.exists():
-        run(java_home / 'bin/keytool.exe', '-genkeypair', '-keystore', key, '-storepass', 'android',
-            '-keypass', 'android', '-alias', 'androiddebugkey', '-dname', 'CN=Flandre Android Preview',
-            '-keyalg', 'RSA', '-keysize', '2048', '-validity', '3650', '-noprompt')
     version = ET.parse(source / 'AndroidManifest.xml').getroot().attrib['{http://schemas.android.com/apk/res/android}versionName']
     output = ROOT / f'dist/Flandre-Android-{version}.apk'
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +79,7 @@ def build(sdk, java_home, checks=False):
         for name in ('classes','dex'):
             (test / name).mkdir(parents=True,exist_ok=True)
         run(tools / 'aapt2.exe','link','-I',library,'--manifest',ROOT / 'android/checks/AndroidManifest.xml',
+            '-A',ROOT / 'checks/fixtures',
             '-o',test / 'unsigned.apk')
         run(javac,'-encoding','UTF-8','-source','8','-target','8','-classpath',
             str(library)+';'+str(work / 'classes'),'-d',test / 'classes',

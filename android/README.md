@@ -1,8 +1,8 @@
 # Flandre Android 独立错题本
 
-当前开发预览版：**0.2.0-preview.9**。Android 8.0（API 26）及以上，编译目标 Android 15。手机能独立录题、识题、整理、练习和复习；电脑是共享同一账号题库的另一客户端。
+当前开发预览版：**0.2.0-preview.10**。Android 8.0（API 26）及以上，编译目标 Android 15。手机能独立录题、识题、整理、练习和复习；电脑是共享同一账号题库的另一客户端。
 
-本版 APK 已发布到 [Android GitHub Release](https://github.com/flandre0605/flandre-notebook/releases/tag/android-v0.2.0-preview.9)，附中文说明和校验文件。本地构建产物为 `dist/Flandre-Android-0.2.0-preview.9.apk`。电脑同时发布 [Windows 0.4.0-preview.5](https://github.com/flandre0605/flandre-notebook/releases/tag/v0.4.0-preview.5)；两端共用邮箱注册和登录保持，账号数据独立保存。旧发布页仅保留历史版本。
+本版 APK 已发布到 [Android GitHub Release](https://github.com/flandre0605/flandre-notebook/releases/tag/android-v0.2.0-preview.10)，附中文说明和校验文件。本地构建产物为 `dist/Flandre-Android-0.2.0-preview.10.apk`。电脑同时发布 [Windows 0.4.0-preview.20](https://github.com/flandre0605/flandre-notebook/releases/tag/v0.4.0-preview.20)；两端共用邮箱注册和登录保持，账号数据独立保存。旧发布页仅保留历史版本。
 
 ## 界面
 
@@ -101,7 +101,7 @@ python scripts/preview_android.py --sdk <SDK目录> --java-home <JDK目录> --wa
 | 学习 | 顺序或随机出题，单选/多选、自评和独立错题标记；自评与作答进度保存；三种掌握状态、0～365 天复习间隔、到期复习与作答历史 |
 | 单词 | 搜索、到期/掌握状态筛选、每页 40 条；按筛选范围翻卡/拼写，翻开后记录掌握；手动编辑、TXT、AI 补全与可调语速的系统英语语音 |
 | 学习统计 | 真实累计/今日作答与正确率、近 7 天图表、最近 90 个学习日；每日 1～500 次练习目标按手机空间保存 |
-| 文件交换 | 题目 JSON/CSV 导入与筛选导出；中文 CSV 标题或电脑的字段标题；重复题目跳过，错误批次整体回滚 |
+| 文件交换 | 题目 JSON/CSV 导入与筛选导出；两端统一格式与转义，每次最多 5000 题／5 MiB；中文或电脑字段标题；重复题目跳过，错误批次整体回滚 |
 | 打印 | 系统打印和保存 PDF，包含题干、选项和公式；每次最多 200 题／50 万字 |
 | 备份 | 手机 ZIP 包含题库、原图、草稿、同步队列、单词与作答记录；恢复前创建并可另存恢复前备份 |
 | 题目互通 | 与电脑共用正式题目、原图、笔记、掌握状态及删除；手机离线修改保留，回执丢失重试原操作编号 |
@@ -134,3 +134,11 @@ adb -s <测试设备> shell am instrument -w com.flandre.notebook.checks/com.fla
 离线公式使用 [KaTeX 0.16.22](https://github.com/KaTeX/KaTeX/tree/v0.16.22)，MIT 许可证；官方 npm 包的 SHA-512 完整性已核验。许可证和来源摘要随 APK 放在 `assets/math/LICENSE.txt`、`UPSTREAM.txt`。页面资源与字体全部本地读取，未使用 CDN。其他运行功能使用 Android 系统 API；导航图标由应用本地绘制，应用图标沿用项目现有资源。
 
 DeepSeek 网页协议参考 [DeeperSeeker](https://github.com/AmanCode22/deeperseeker) 固定提交 `7e550f552b5b31429dcf5213394ca3e74154708f`；本机模块来自同提交的 [deepseek_pow_solver](https://github.com/AmanCode22/deepseek_pow_solver)，与固定 Git blob 完整性比对通过。`assets/deepseek/LICENSE.txt`、`UPSTREAM.txt` 包含许可、来源和 WASM SHA-256。
+
+## 安卓签名保管
+
+构建使用 `%LOCALAPPDATA%/FlandreNotebook/signing/android-preview.keystore`。首次更新会复制原 `build/android-preview-debug.keystore`，保持现有发布证书；以后清理构建目录不会丢签名。签名缺失时停止构建，不自动生成新证书。请将签名另行备份到自己的安全存储，不提交到 GitHub，也不放入 APK。
+
+新开发者第一次构建应有意识地创建自己的开发签名，放入上述位置（现有构建使用别名 `androiddebugkey` 和开发口令 `android`）；自己的签名不能覆盖本项目已发布 APK。维护者发布更新必须恢复原签名，不能通过卸载旧 App 解决证书不同的问题。
+
+本轮隔离模拟器通过 203 项检查，新增双向 JSON/CSV 实际导出核对；签名证书与 0.2.0-preview.9 一致。

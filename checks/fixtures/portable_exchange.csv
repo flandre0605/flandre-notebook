@@ -1,0 +1,4 @@
+﻿stem,subject,question_type,answer,explanation,tags,knowledge_points,difficulty,source,grade,notes,options,is_wrong,_flandre_escaped
+"'-2 + 1 = ?
+含逗号,以及""引号""",数学,,'-1,使用 $x^2$，保留换行。,,,,'@source,,''literal,{},1,1
+'=1+1,数学,单选题,A,,'+tag,'-point,,,,,"{""A"": ""2"", ""B"": ""3""}",0,1

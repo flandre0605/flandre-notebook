@@ -9,8 +9,8 @@ from unittest.mock import patch
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QEnterEvent, QFont, QFontDatabase, QImage, QMouseEvent
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QEnterEvent, QFont, QFontDatabase, QImage, QMouseEvent
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QLabel, QVBoxLayout, QWidget
 from shiboken6 import isValid
@@ -18,6 +18,7 @@ from shiboken6 import isValid
 from app.database import store
 from app.ui.main_window import MainWindow
 from app.ui.mini_practice_window import PET_EXPRESSIONS
+from app.ui.pet_walk import WALK_FRAME_MS, WALK_FRAMES, WALK_STRIDE, walking_frames
 
 
 def expression_preview(mini, path):
@@ -64,8 +65,52 @@ def expression_preview(mini, path):
     preview.close()
 
 
+def motion_preview(mini, path):
+    preview = QWidget()
+    preview.setStyleSheet("background: #fff8fb; color: #503845;")
+    grid = QGridLayout(preview)
+    row = 0
+    for mode in ("walk", "fly"):
+        frames = mini._motion_icons[mode, False]
+        for column, icon in enumerate(frames):
+            face = QLabel()
+            face.setPixmap(icon.pixmap(mini.pet_button.iconSize()))
+            face.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label = QLabel(("迈步" if mode == "walk" else "扇翅") + f" · {column + 1}")
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            grid.addWidget(face, row + (column // 4) * 2, column % 4)
+            grid.addWidget(label, row + (column // 4) * 2 + 1, column % 4)
+        row += ((len(frames) + 3) // 4) * 2
+    preview.show()
+    QApplication.processEvents()
+    assert preview.grab().save(str(path))
+    preview.close()
+
+
 def check(preview_path=None):
     app = QApplication.instance() or QApplication([])
+    with tempfile.TemporaryDirectory() as directory:
+        atlas = QImage(16, 16, QImage.Format.Format_ARGB32)
+        atlas.fill(Qt.GlobalColor.transparent)
+        for index in range(8):
+            x, y = index % 4 * 4 + 1, index // 4 * 8 + 1 + index // 4
+            for offset in range(4):
+                atlas.setPixelColor(x, y + offset, QColor(120 + index * 10, 40, 60))
+            atlas.setPixelColor(x + 1, y + 1, QColor("white"))
+        path = Path(directory) / "atlas.png"
+        assert atlas.save(str(path))
+        frames = walking_frames(path)
+        assert len(frames) == 8
+        for index, frame in enumerate(frames):
+            image = frame.toImage()
+            assert image.size() == frames[0].size()
+            assert image.pixelColor(1, 4) == QColor(120 + index * 10, 40, 60), "row-major poses must stay intact and aligned"
+            assert image.pixelColor(2, 5) == QColor("white"), "white foreground must remain opaque"
+            assert image.pixelColor(0, 0).alpha() == 0
+        atlas.fill(Qt.GlobalColor.transparent)
+        assert atlas.save(str(path))
+        assert not walking_frames(path), "an empty atlas must fall back to the standing pose"
+        assert not walking_frames(Path(directory) / "missing.png")
     sprite = QImage(str(Path(__file__).resolve().parents[1] / "assets" / "flandre_pet_chibi.png"))
     assert not sprite.isNull() and sprite.hasAlphaChannel()
     assert sprite.pixelColor(0, 0).alpha() == 0
@@ -111,8 +156,35 @@ def check(preview_path=None):
             QCoreApplication.sendEvent(mini.pet_button, QEvent(QEvent.Type.Leave))
             assert mini._expression == "idle"
             assert all(not icon.pixmap(mini.pet_button.iconSize()).isNull() for icon in mini._pet_icons.values())
+            for filename, aspect in (("pet_walk_user.png", 1024 / 765), ("pet_motion.png", 2)):
+                sheet = QImage(str(Path(__file__).resolve().parents[1] / "assets" / filename))
+                assert not sheet.isNull() and sheet.hasAlphaChannel() and abs(sheet.width() - sheet.height() * aspect) <= 2
+                assert sheet.pixelColor(0, 0).alpha() == 0, "sprite backdrop must be transparent"
+            assert len(mini._motion_icons) == 4
+            for (mode, facing), frames in mini._motion_icons.items():
+                assert len(frames) == (WALK_FRAMES if mode == "walk" else 4) and all(not icon.isNull() for icon in frames)
+                rendered = [icon.pixmap(mini.pet_button.iconSize()).toImage() for icon in frames]
+                assert all(rendered[i] != rendered[j] for i in range(len(frames)) for j in range(i))
+                if mode == "walk" and not facing:
+                    for image in (rendered[0], rendered[WALK_FRAMES // 2]):
+                        pixels = {(x, y) for y in range(image.height()) for x in range(image.width())
+                                  if image.pixelColor(x, y).alpha() > 60}
+                        components = 0
+                        while pixels:
+                            pending = [pixels.pop()]
+                            size = 0
+                            while pending:
+                                x, y = pending.pop()
+                                size += 1
+                                for point in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                                    if point in pixels:
+                                        pixels.remove(point)
+                                        pending.append(point)
+                            components += size > 8
+                        assert components == 1, "texture crops must not leave detached neighboring fragments"
             if preview_path:
                 expression_preview(mini, preview_path.with_name("pet-expression-preview.png"))
+                motion_preview(mini, preview_path.with_name("pet-motion-preview.png"))
             run.user_answer.setPlainText("5")
             QCoreApplication.sendEvent(mini.pet_button, QEvent(QEvent.Type.Leave))
             assert mini._expression == "thinking"
@@ -166,6 +238,95 @@ def check(preview_path=None):
             mini.pin_button.click()
             assert mini.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
             assert run.user_answer.toPlainText() == "5"
+            # Expanding near the taskbar must not replace the pet's resting position.
+            mini.toggle_collapsed()
+            mini._has_landed = True
+            area = mini._available_geometry()
+            resting = QPoint(area.right() - mini.width() - 20, area.bottom() - mini.height() - 20)
+            mini.move(resting)
+            for _ in range(3):
+                mini.toggle_collapsed()
+                assert mini.y() < resting.y() and area.contains(mini.geometry())
+                mini.toggle_collapsed()
+                assert mini.pos() == resting
+            mini.toggle_collapsed()
+            mini.move(mini.pos() + QPoint(-15, -20))
+            mini.toggle_collapsed()
+            assert mini.pos() == resting + QPoint(-15, -20)
+            # First landing, walking and flight stay in the monitor's work area.
+            mini.move(QPoint(area.left() + 100, area.top() + 20))
+            mini._hovered = mini._sleeping = mini._has_landed = False
+            QCoreApplication.sendEvent(mini, QEvent(QEvent.Type.WindowDeactivate))
+            assert mini._motion_mode == "fall"
+            mini._movement.setCurrentTime(1000)
+            assert mini.y() == area.bottom() - mini.height() - 11
+            assert mini._idle_timer.isActive()
+            # A previously landed pet dragged into the air must land before walking.
+            mini.move(mini.pos() + QPoint(0, -120))
+            with patch("app.ui.mini_practice_window.random.choice") as choose:
+                mini._wander()
+                choose.assert_not_called()
+            assert mini._motion_mode == "fall" and mini._has_landed
+            mini._movement.setCurrentTime(1000)
+            assert mini.y() == area.bottom() - mini.height() - 11
+            narrow = type(area)(mini.x(), area.top(), mini.width(), area.height())
+            with patch.object(mini, "_available_geometry", return_value=narrow), \
+                 patch("app.ui.mini_practice_window.random.choice", side_effect=[False, 1]), \
+                 patch("app.ui.mini_practice_window.random.randint", return_value=160):
+                mini._wander()
+            assert mini._motion_mode is None and mini._idle_timer.isActive(), "no room must not cause walking in place"
+            for flying in (False, True):
+                mini.move(QPoint(area.left() + 100, area.bottom() - mini.height() - 11))
+                before = mini.pos()
+                with patch("app.ui.mini_practice_window.random.choice", side_effect=[flying, 1]), \
+                     patch("app.ui.mini_practice_window.random.randint", side_effect=[160, 140]):
+                    mini._wander()
+                assert mini._motion_mode == ("fly" if flying else "walk")
+                assert not mini._facing_left
+                first_frame = mini.pet_button.icon().pixmap(mini.pet_button.iconSize()).toImage()
+                mini._movement.setCurrentTime(120)
+                assert mini.pet_button.icon().pixmap(mini.pet_button.iconSize()).toImage() != first_frame
+                duration = mini._movement.duration()
+                if not flying:
+                    cycle = WALK_FRAME_MS * WALK_FRAMES
+                    assert duration == round(160 / WALK_STRIDE * cycle)
+                    for frame in range(WALK_FRAMES):
+                        mini._movement.setCurrentTime(frame * WALK_FRAME_MS)
+                        assert mini.pet_button.icon().cacheKey() == mini._motion_icons["walk", False][frame].cacheKey()
+                        assert mini.y() == before.y()
+                    mini._movement.setCurrentTime(cycle)
+                    assert mini.pet_button.icon().cacheKey() == mini._motion_icons["walk", False][0].cacheKey()
+                mini._movement.setCurrentTime(duration // 2)
+                assert area.contains(mini.geometry()) and mini.x() > before.x()
+                if flying:
+                    assert mini.y() < before.y() - 100
+                mini._movement.setCurrentTime(duration)
+                assert area.contains(mini.geometry()) and mini._motion_mode is None
+                assert mini.pet_button.icon().cacheKey() == mini._pet_icons[mini._expression].cacheKey()
+            with patch("app.ui.mini_practice_window.random.choice", side_effect=[False, -1]), \
+                 patch("app.ui.mini_practice_window.random.randint", side_effect=[100, 140]):
+                mini._wander()
+            assert mini._facing_left
+            assert mini.pet_button.icon().cacheKey() == mini._motion_icons["walk", True][0].cacheKey()
+            endpoint = mini._movement.endValue()
+            with patch("app.ui.mini_practice_window.random.choice") as choose:
+                mini._wander()
+                choose.assert_not_called()
+            assert mini._facing_left and mini._movement.endValue() == endpoint
+            QCoreApplication.sendEvent(mini.pet_button, QEnterEvent(QPointF(), QPointF(), QPointF()))
+            paused = mini.pos()
+            QTest.qWait(40)
+            assert mini.pos() == paused and mini._movement.state() == QAbstractAnimation.State.Stopped
+            assert not mini._idle_timer.isActive()
+            assert mini.pet_button.icon().cacheKey() == mini._pet_icons["happy"].cacheKey()
+            QCoreApplication.sendEvent(mini.pet_button, QEvent(QEvent.Type.Leave))
+            QCoreApplication.sendEvent(mini, QEvent(QEvent.Type.WindowActivate))
+            assert mini._movement.state() == QAbstractAnimation.State.Stopped and not mini._idle_timer.isActive()
+            mini.hide()
+            assert not mini._sleep_timer.isActive() and not mini._idle_timer.isActive()
+            mini.show()
+            mini.toggle_collapsed()
+            remembered_pet = mini.collapsed_position()
             mini.close()
             app.processEvents()
             assert window.isVisible() and window._mini_practice_window is None
@@ -181,6 +342,9 @@ def check(preview_path=None):
             window.mini_practice_button.click()
             mini = window._mini_practice_window
             QTest.qWait(220)
+            mini.toggle_collapsed()
+            assert mini.pos() == mini._bounded_position(remembered_pet)
+            mini.toggle_collapsed()
             QCoreApplication.sendEvent(mini.pet_button, QEvent(QEvent.Type.Leave))
             assert mini._expression == "happy"
             assert run.solution.isVisible() and run.result_choice.currentData() == "correct"
@@ -218,6 +382,7 @@ def check(preview_path=None):
             assert mini._expression == "idle"
             mini.restore_button.click()
             assert not mini._sleep_timer.isActive()
+            assert not mini._idle_timer.isActive() and mini._movement.state() == QAbstractAnimation.State.Stopped
             assert window._mini_practice_window is None and window.isVisible()
             assert run.index == 1
             window.enter_mini_practice()
@@ -269,7 +434,7 @@ def check(preview_path=None):
             window.close()
             app.processEvents()
             assert not window.isVisible() and window._mini_practice_window is None
-    print("Mini practice check passed (six expressions, hover/drag/sleep/wake and grading reactions, collapse/expand, state, pin, restore, scrolling, completion and shutdown; temporary database only).")
+    print("Mini practice check passed (intact eight-pose atlas, row alignment, transparency, playback and left/right facing; position restoration, landing/walk/flight, interaction pause, bounds and timer cleanup; expressions, practice state and scrolling; temporary database only).")
 
 
 if __name__ == "__main__":

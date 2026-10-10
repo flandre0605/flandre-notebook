@@ -57,15 +57,14 @@ def import_recognized_questions(questions, source, workspace_key=None, extra_sou
     ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
     destinations, images = [], []
     try:
-        for _ in questions:
-            entries = []
-            for original in sources:
-                destination = ATTACHMENTS_DIR / f"{uuid4().hex}{original.suffix.lower()}"
-                destinations.append(destination)
-                shutil.copyfile(original, destination)
-                entries.append(dict(relative_path=f"attachments/{destination.name}", original_name=original.name,
-                                    mime_type=mimetypes.guess_type(original.name)[0] or "image/png"))
-            images.append(entries)
+        entries = []
+        for original in sources:
+            destination = ATTACHMENTS_DIR / f"{uuid4().hex}{original.suffix.lower()}"
+            destinations.append(destination)
+            shutil.copyfile(original, destination)
+            entries.append(dict(relative_path=f"attachments/{destination.name}", original_name=original.name,
+                                mime_type=mimetypes.guess_type(original.name)[0] or "image/png"))
+        images = [entries for _ in questions]
         return store.save_recognized_questions(questions, images, workspace_key)
     except Exception:
         for destination in destinations:
@@ -86,7 +85,7 @@ def attachment_file(relative_path: str) -> Path:
 
 def delete_image(attachment_id: int) -> None:
     relative_path = store.delete_attachment(attachment_id)
-    if relative_path is None:
+    if relative_path is None or store.attachment_is_referenced(relative_path):
         return
     attachment_file(relative_path).unlink(missing_ok=True)
 
@@ -97,7 +96,8 @@ def delete_question_images(question_id: int) -> list[str]:
     failures = []
     for row in rows:
         try:
-            attachment_file(row["relative_path"]).unlink(missing_ok=True)
+            if not store.attachment_is_referenced(row["relative_path"]):
+                attachment_file(row["relative_path"]).unlink(missing_ok=True)
         except (OSError, ValueError) as error:
             failures.append(f"{row['original_name']}: {error}")
     return failures

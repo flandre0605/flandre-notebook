@@ -13,7 +13,32 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.4.0-preview.5"
+VERSION = "0.4.0-preview.20"
+
+
+def build_bridge(env):
+    from app.services.deepseek_web import BRIDGE, REVISION
+    source = BRIDGE
+    python = source / '.venv/Scripts/python.exe'
+    if not python.is_file() or not (source / 'app.py').is_file():
+        raise RuntimeError('构建电脑需先执行 .venv/Scripts/python.exe -m app.services.deepseek_web 准备固定上游环境。')
+    revision = subprocess.check_output(['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
+    clean = subprocess.run(['git', '-C', str(source), 'diff', '--exit-code', 'HEAD', '--',
+        'app.py', 'functions.py', 'middleware.py', 'plugin_helper.py', 'wasm', 'templates', 'static', 'LICENSE'], capture_output=True)
+    if revision != REVISION or clean.returncode:
+        raise RuntimeError('上游源码版本不符或文件已修改，未打包。')
+    subprocess.run([str(python), '-m', 'pip', 'install',
+        'pyinstaller==' + importlib.metadata.version('pyinstaller'),
+        'pyinstaller-hooks-contrib==' + importlib.metadata.version('pyinstaller-hooks-contrib')], check=True)
+    bridge_env = dict(env, FLANDRE_DEEPSEEK_SOURCE=str(source))
+    subprocess.run([str(python), '-m', 'PyInstaller', '--noconfirm', '--clean',
+        '--distpath', str(ROOT/'build/bundled-deepseek'), '--workpath', str(ROOT/'build/bridge-work'),
+        str(ROOT/'packaging/deepseek.spec')], cwd=source, env=bridge_env, check=True)
+    bundle = ROOT/'build/bundled-deepseek/FlandreDeepSeek'
+    versions = subprocess.check_output([str(python), '-c',
+        "import importlib.metadata as m,json;print(json.dumps({d.metadata['Name']:d.version for d in m.distributions()}))"], text=True)
+    (bundle/'build-info.json').write_text(json.dumps(dict(revision=revision, dependencies=json.loads(versions)), indent=2), encoding='utf-8')
+    shutil.copy2(Path(sys.base_prefix)/'LICENSE.txt', bundle/'PYTHON-LICENSE.txt')
 
 
 def build(compiler=None):
@@ -26,6 +51,8 @@ def build(compiler=None):
     windows = Path(os.environ.get("SystemRoot", "C:/Windows"))
     env["PATH"] = os.pathsep.join(str(path) for path in (
         Path(sys.executable).parent, Path(sys.base_prefix), windows / "System32", windows))
+    sys.path.insert(0, str(ROOT))
+    build_bridge(env)
     subprocess.run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
                     "--distpath", str(output), "--workpath", str(ROOT / "build"),
                     str(ROOT / "packaging" / "flandre.spec")], cwd=ROOT, env=env, check=True)

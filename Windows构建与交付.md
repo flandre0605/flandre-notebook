@@ -1,8 +1,10 @@
 # Windows 构建与交付
 
-当前发布：**0.4.0-preview.5**（2026-10-08）。[下载 Windows 免安装 ZIP](https://github.com/flandre0605/flandre-notebook/releases/tag/v0.4.0-preview.5)，附中文说明和 SHA-256 校验文件；本地输出 `dist/0.4.0-preview.5/`。本版统一产品界面、移除内置演示内容，包含邮箱注册、登录保持以及同一主窗口内的账号切换，账号目录独立。旧版升级后先重新登录一次。账号配置见 [账号注册配置](账号注册配置.md)。
+当前发布：**0.4.0-preview.20**（2026-10-11）。[下载 Windows 免安装 ZIP](https://github.com/flandre0605/flandre-notebook/releases/tag/v0.4.0-preview.20)，输出 `dist/0.4.0-preview.20/`，附中文说明和 SHA-256 校验文件。完整解压后运行 `FlandreNotebook/FlandreNotebook.exe`；升级前从托盘退出旧版，已有题库保留。
 
-实际 EXE 已通过空题库/发布资源、注册、系统凭据、公式、练习和备份检查，源码摘要与包内记录一致；包内没有个人数据库或检查夹具。本轮提供免安装 ZIP，未新增安装向导。
+本版包含系统托盘、用户提供的完整八帧桌宠走路、内置 DeepSeek 网页版服务，以及备份失败保护、模型跳转拦截、手机文件互通和批量原图共享修复。无需安装 Python/Git，不附带个人题库或登录凭据。
+
+构建命令：`.venv/Scripts/python.exe scripts/build_windows.py`。源码检查和实际 EXE 使用独立临时题库验证；真实模型账号、云端及多屏显示仍需实际验收。
 
 ## 0.4.0-preview.1 交付历史
 

@@ -265,14 +265,16 @@ class PracticeDialog(QDialog):
     def save_progress(self):
         self._checkpoint.stop()
         if self.index >= len(self.questions):
-            return
+            return True
         try:
             if any(len(editor.toPlainText()) > 20000 for editor in (self.user_answer, self.mistake_reason)):
                 raise ValueError("答案和错因分别最多 20000 字，请精简后保存。")
             store.save_workspace("practice", self.session_state())
+            return True
         except (sqlite3.Error, ValueError) as error:
             self.judgement.setText(f"进度自动保存失败：{error}。请保留窗口并稍后重试。")
             self.judgement.show()
+            return False
 
     def show_question(self):
         self._submitted = False

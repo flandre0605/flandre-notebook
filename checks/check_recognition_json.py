@@ -72,7 +72,7 @@ def check():
         {"finish_reason": "length", "message": {"content": valid}}
     ]}).encode()
     with patch.object(provider, "get_api_key", return_value="mock"), patch.object(
-        provider.urllib.request, "urlopen", return_value=response
+        provider.urllib.request, "build_opener", return_value=MagicMock(open=MagicMock(return_value=response))
     ):
         try:
             provider._request(profile, [])
@@ -89,12 +89,12 @@ def check():
         ):
             response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
             with patch.object(provider, "_image_for_request", return_value=("image/png", "mock")):
-                before = provider.urllib.request.urlopen.call_count
+                before = provider.urllib.request.build_opener.return_value.open.call_count
                 try:
                     provider.recognize_image(profile, "unused.png")
                 except provider.ProviderError as error:
                     assert "停止自动重试" in str(error) and error.raw_response
-                    assert provider.urllib.request.urlopen.call_count == before + 1
+                    assert provider.urllib.request.build_opener.return_value.open.call_count == before + 1
                 else:
                     raise AssertionError("Accepted relay error as model output")
         # The same transport guard must also prevent a false successful connection test.

@@ -380,6 +380,11 @@ def delete_attachment(attachment_id: int) -> str | None:
         return row["relative_path"]
 
 
+def attachment_is_referenced(relative_path: str) -> bool:
+    with _connection() as connection:
+        return connection.execute("SELECT 1 FROM attachments WHERE relative_path = ? LIMIT 1", (relative_path,)).fetchone() is not None
+
+
 def practice_questions(
     mode: str,
     search: str = "",

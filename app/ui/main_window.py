@@ -21,8 +21,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QStackedWidget,
+    QSystemTrayIcon,
     QScrollArea,
     QStyle,
     QStyledItemDelegate,
@@ -234,12 +236,14 @@ class QuestionDialog(QDialog):
     def save_draft(self):
         self._autosave.stop()
         if not self.on_save:
-            return
+            return True
         try:
             values = validate_question(self.values(), draft=True)
             store.save_workspace(self.draft_key, values)
+            return True
         except (sqlite3.Error, ValueError) as error:
             self.validation_status.setText(f"草稿自动保存失败：{error}")
+            return False
 
     def done(self, result):
         self._autosave.stop()
@@ -288,6 +292,56 @@ class MainWindow(QMainWindow):
         self.cloud_lock = cloud_lock
         self.resize(1280, 820)
         self._build_workspace(cloud_session, cloud_root)
+        self._exit_requested = False
+        self._tray_notice_shown = False
+        self._tray = None
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            from PySide6.QtWidgets import QApplication
+            self._tray = QSystemTrayIcon(QIcon(str(
+                Path(__file__).resolve().parents[2] / "assets" / "flandre_icon.ico"
+            )), self)
+            self._tray.setToolTip("Flandre 错题本")
+            menu = QMenu(self)
+            menu.addAction("打开主界面", self._restore_from_tray)
+            menu.addAction("显示桌宠", self._show_pet_from_tray)
+            menu.addSeparator()
+            menu.addAction("退出程序", self._request_exit)
+            self._tray.setContextMenu(menu)
+            self._tray.activated.connect(self._tray_activated)
+            self._tray.show()
+            QApplication.instance().setQuitOnLastWindowClosed(False)
+
+    def _tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._restore_from_tray()
+
+    def _restore_from_tray(self):
+        self.restore_mini_practice()
+        self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _show_pet_from_tray(self):
+        if "practice_run" not in self._page_dialogs:
+            self._restore_from_tray()
+            self.start_practice()
+            if self._practice_setup is not None:
+                self._practice_setup.mini_mode.setChecked(True)
+                self._practice_setup.status.setText("选择题目并开始练习后，会自动打开桌宠小窗；空题库请先收录题目。")
+        if "practice_run" in self._page_dialogs:
+            self.enter_mini_practice()
+        else:
+            self.statusBar().showMessage("选择题目开始练习后，即可使用桌宠小窗。", 10000)
+
+    def _request_exit(self):
+        from PySide6.QtWidgets import QApplication
+        self._exit_requested = True
+        if self.close():
+            QApplication.instance().quit()
+        else:
+            self._exit_requested = False
+            self._restore_from_tray()
 
     def _build_workspace(self, cloud_session, cloud_root):
         self.cloud_session = cloud_session
@@ -656,6 +710,7 @@ class MainWindow(QMainWindow):
         self._profiles_dialog = None
         self._practice_setup = None
         self._mini_practice_window = None
+        self._mini_practice_position = None
         self._recognition_dialogs = []
         self.screenshot_shortcut = str(
             QSettings().value("shortcuts/screenshot", "Ctrl+Alt+S")
@@ -668,7 +723,7 @@ class MainWindow(QMainWindow):
         self.refresh()
         self.show_home()
 
-    def can_switch_workspace(self):
+    def _has_running_tasks(self):
         from PySide6.QtCore import QThreadPool
         busy = QThreadPool.globalInstance().activeThreadCount() > 0
         busy |= any(getattr(d, '_recognizing', False) for d in self._recognition_dialogs)
@@ -678,7 +733,10 @@ class MainWindow(QMainWindow):
         if self._profiles_dialog is not None:
             busy |= any(getattr(self._profiles_dialog, name, None) is not None
                         for name in ('worker', 'models_worker', 'web_worker'))
-        if busy:
+        return bool(busy)
+
+    def can_switch_workspace(self):
+        if self._has_running_tasks():
             self.statusBar().showMessage('识题、同步或模型请求正在进行，请结束后再切换题库。', 10000)
             return False
         if 'question' in self._pages or 'practice_run' in self._pages:
@@ -1053,10 +1111,10 @@ class MainWindow(QMainWindow):
         notes_saved = self._flush_notes()
         editor = self._page_dialogs.get("question")
         if editor is not None:
-            editor.save_draft()
+            notes_saved = editor.save_draft() and notes_saved
         practice = self._page_dialogs.get("practice_run")
         if practice is not None:
-            practice.save_progress()
+            notes_saved = practice.save_progress() and notes_saved
         if "vocabulary" in self._pages:
             notes_saved = self.vocabulary_page.save_workspaces() and notes_saved
         for dialog in self._recognition_dialogs:
@@ -1065,15 +1123,27 @@ class MainWindow(QMainWindow):
         return notes_saved
 
     def closeEvent(self, event):
-        if self._cloud_dialog is not None and (
-            self._cloud_dialog.worker is not None or
-            any(getattr(child, 'worker', None) is not None for child in self._cloud_dialog.children())
-        ):
-            self.statusBar().showMessage('同步或导入正在进行，请结束后再关闭。')
+        background = self._tray is not None and self._tray.isVisible() and not self._exit_requested
+        if not background and self._has_running_tasks():
+            self.statusBar().showMessage('识题、同步或模型请求正在进行，请结束后再退出。', 10000)
             event.ignore()
             return
         if not self._save_workspaces():
+            self.statusBar().showMessage("草稿或笔记尚未保存，请修正输入或稍后重试；窗口和内容继续保留。", 10000)
             event.ignore()
+            return
+        if background:
+            if "vocabulary" in self._pages:
+                self.vocabulary_page.speech.stop()
+            self._motion.finish()
+            self._cancel_screenshot()
+            if self._mini_practice_window is not None:
+                self._mini_practice_window.hide()
+            self.hide()
+            event.ignore()
+            if not self._tray_notice_shown:
+                self._tray_notice_shown = True
+                self._tray.showMessage("Flandre 仍在运行", "双击托盘图标打开，右键选择“退出程序”结束运行。")
             return
         if "vocabulary" in self._pages:
             self.vocabulary_page.cancel_translation()
@@ -1084,6 +1154,8 @@ class MainWindow(QMainWindow):
         self._screenshot_hotkey.close()
         for dialog in list(self._recognition_dialogs):
             dialog.reject()
+        if self._tray is not None:
+            self._tray.hide()
         super().closeEvent(event)
 
     def refresh(self):
@@ -1590,6 +1662,8 @@ class MainWindow(QMainWindow):
         available = self.screen().availableGeometry()
         mini.resize(480, min(640, available.height() - 64))
         mini.move(max(available.left(), available.right() - mini.width() - 24), available.top() + 24)
+        if self._mini_practice_position is not None:
+            mini.place_pet(self._mini_practice_position)
         self.hide()
         mini.show()
         practice.show()
@@ -1601,6 +1675,7 @@ class MainWindow(QMainWindow):
         if mini is None:
             return
         self._motion.finish()
+        self._mini_practice_position = mini.collapsed_position()
         self._mini_practice_window = None
         practice = mini.take_practice()
         practice.setWindowFlags(Qt.WindowType.Widget)

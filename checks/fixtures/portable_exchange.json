@@ -1,0 +1,39 @@
+{
+  "format": "flandre-questions",
+  "version": 1,
+  "questions": [
+    {
+      "stem": "-2 + 1 = ?\n含逗号,以及\"引号\"",
+      "subject": "数学",
+      "question_type": "",
+      "answer": "-1",
+      "explanation": "使用 $x^2$，保留换行。",
+      "tags": "",
+      "knowledge_points": "",
+      "difficulty": "",
+      "source": "@source",
+      "grade": "",
+      "notes": "'literal",
+      "is_wrong": 1,
+      "options": {}
+    },
+    {
+      "stem": "=1+1",
+      "subject": "数学",
+      "question_type": "单选题",
+      "answer": "A",
+      "explanation": "",
+      "tags": "+tag",
+      "knowledge_points": "-point",
+      "difficulty": "",
+      "source": "",
+      "grade": "",
+      "notes": "",
+      "is_wrong": 0,
+      "options": {
+        "A": "2",
+        "B": "3"
+      }
+    }
+  ]
+}

@@ -16,6 +16,8 @@ Qt and PySide shared libraries remain separate files and are dynamically loaded.
 | latex2mathml | https://github.com/roniemartinez/latex2mathml | MIT; upstream license |
 | STIX Two Math | https://github.com/stipub/stixfonts | SIL Open Font License 1.1; font copyright and metadata in `licenses/FONTS.txt` |
 | DejaVu Sans | https://dejavu-fonts.github.io/ | Font copyright and license extracted to `licenses/FONTS.txt` |
+| DeeperSeeker | https://github.com/AmanCode22/deeperseeker · revision 7e550f552b5b31429dcf5213394ca3e74154708f | Unmodified upstream; LICENSE in `_internal/services/deepseek-web/_internal/LICENSE` includes additional account-use terms |
+| Bundled service runtime | wasmtime, aiohttp, uvicorn, FastAPI, Starlette, Jinja2, python-multipart, deepseek-tokenizer and their dependencies | Versions in service `build-info.json`; supplied licenses and package metadata in its `_internal/*dist-info/` |
 
 The precise installed Python package versions are recorded in `build-info.json`.
 Bundled libraries and fonts are not modified by this application's build scripts.

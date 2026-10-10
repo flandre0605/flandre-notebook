@@ -71,10 +71,26 @@ final class NotebookChecks {
             reject(()->AiClient.parse("{\"stem\":\"first\"} {\"stem\":\"second\"}"),"trailing JSON cannot silently discard another question");
             reject(()->AiClient.parse("```json\n{\"stem\":\"first\"}\n```\nsecond question"),"content after code fence refused");
             JSONObject fileQuestion=Notebook.question(q("含逗号,引号\"以及\n第二行").put("answer","$\\frac{1}{2}$"));String csv=QuestionFiles.export(new JSONArray().put(fileQuestion));check(CloudApi.same(fileQuestion,QuestionFiles.questions(csv).getJSONObject(0)),"CSV preserves quoted cells, newlines, Chinese and formulas");reject(()->QuestionFiles.questions("stem,answer\n\"unclosed,0"),"truncated CSV rejected");reject(()->QuestionFiles.questions("stem,题干\na,b"),"duplicate CSV question columns refused");
+            portableFiles();
             String owner="CHECK_"+CloudApi.id();JSONObject profile=new JSONObject().put("url","https://example.com/v1/chat/completions").put("model","test").put("key","synthetic-secret-only");ModelProfile.write(checks.getTargetContext(),owner,profile);check(CloudApi.same(profile,ModelProfile.read(checks.getTargetContext(),owner)),"encrypted model profile roundtrip");check(!checks.getTargetContext().getSharedPreferences("models",0).getString(owner,"").contains("synthetic-secret"),"model key never stored as plaintext");checks.getTargetContext().getSharedPreferences("models",0).edit().remove(owner).commit();
             // Deletion conflict keeps an explicitly chosen phone copy under a NEW UUID.
             server.change(id,new JSONObject(),true);book.save(id,book.entry(id).getJSONObject("payload").getJSONObject("question").put("notes","keep after remote delete"),null);NotebookSync.synchronize(book,api);int count=book.entries("","","").size();book.resolve(id,true);check(book.entry(id).getInt("deleted")==1&&book.entries("","","").size()==count,"remote deletion not resurrected; local copy receives fresh identity");NotebookSync.synchronize(book,api);
         }finally{book.close();}
+    }
+    void portableFiles() throws Exception {
+        JSONArray json,csv;
+        try(InputStream in=checks.getContext().getAssets().open("portable_exchange.json")){json=QuestionFiles.questions(new String(NotebookBackup.read(in,QuestionFiles.MAX_BYTES),StandardCharsets.UTF_8));}
+        try(InputStream in=checks.getContext().getAssets().open("portable_exchange.csv")){csv=QuestionFiles.questions(new String(NotebookBackup.read(in,QuestionFiles.MAX_BYTES),StandardCharsets.UTF_8));}
+        check(CloudApi.same(json,csv),"desktop JSON and escaped CSV import identically on phone");
+        check(json.getJSONObject(0).getString("stem").startsWith("-2")&&json.getJSONObject(0).getString("answer").equals("-1")&&json.getJSONObject(0).getString("notes").equals("'literal"),"negative values and literal quotes survive desktop-to-phone exchange");
+        String exportedJson=QuestionFiles.json(json),exportedCsv=QuestionFiles.export(json);
+        check(CloudApi.same(json,QuestionFiles.questions(exportedJson))&&CloudApi.same(json,QuestionFiles.questions(exportedCsv)),"phone JSON and CSV round trips preserve every field");
+        JSONObject file=new JSONObject(exportedJson);check(file.getString("format").equals("flandre-questions")&&file.getInt("version")==1&&exportedCsv.contains("_flandre_escaped")&&exportedCsv.contains("\"'=1+1\""),"phone exports use desktop format and neutralize spreadsheet formulas");
+        check(CloudApi.same(json,QuestionFiles.questions(new JSONObject().put("questions",json).toString())),"legacy phone JSON remains readable");
+        reject(()->QuestionFiles.questions(new JSONObject().put("format","flandre-questions").put("version",2).put("questions",json).toString()),"unknown portable file version refused");
+        JSONArray tooMany=new JSONArray();for(int i=0;i<=QuestionFiles.MAX_ROWS;i++)tooMany.put(json.getJSONObject(0));reject(()->QuestionFiles.json(tooMany),"phone export obeys desktop 5000-question limit");
+        File folder=new File(checks.getTargetContext().getCacheDir(),"portable-exchange");if(!folder.isDirectory()&&!folder.mkdirs())throw new IOException("Cannot create synthetic exchange directory");
+        PhotoQueue.atomic(new File(folder,"phone.json"),exportedJson.getBytes(StandardCharsets.UTF_8));PhotoQueue.atomic(new File(folder,"phone.csv"),exportedCsv.getBytes(StandardCharsets.UTF_8));
     }
     void ui(Activity activity) throws Exception {
         MainActivity main=(MainActivity)activity;final FormulaView[] formula=new FormulaView[1];
