@@ -1,0 +1,4 @@
+[
+  {"user_id":"USER_A","id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","kind":"word","version":1,"seq":1,"deleted":false,"payload":{"word":"hello","meaning":"你好","phonetic":"həˈləʊ","example":"Hello world","book":"英语","mastery":"mastered","review_count":2,"streak":1,"due_at":"2026-10-12 02:00:00","last_reviewed_at":"2026-10-11 02:00:00"}},
+  {"user_id":"USER_A","id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","kind":"attempt","version":1,"seq":2,"deleted":false,"payload":{"question_cloud_id":"cccccccccccccccccccccccccccccccc","question_stem":"当时的题干","question_subject":"数学","answered_at":"2026-10-11 02:00:00","user_answer":"A","result":"incorrect","mastery":"unsure","duration_seconds":8,"mistake_reason":"计算错误"}}
+]

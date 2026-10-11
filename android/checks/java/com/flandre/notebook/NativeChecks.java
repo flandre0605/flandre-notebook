@@ -45,6 +45,7 @@ public final class NativeChecks extends Instrumentation {
             if(!restartMode.isEmpty()){restartSession();result.putString("stream","PASS: Android process restart "+restartMode+" ("+passed+" checks)\n");finish(Activity.RESULT_OK,result);return;}
             registration();sessions();
             NotebookChecks notebookChecks=new NotebookChecks(this);notebookChecks.run();
+            new LearningChecks(this).run();
             File base=new File(getTargetContext().getFilesDir(),"checks-"+CloudApi.id());
             PhotoQueue queue=new PhotoQueue(base,"USER_A");byte[] png=image(Bitmap.CompressFormat.PNG),jpg=image(Bitmap.CompressFormat.JPEG);
             JSONObject task=queue.save(png,"png",jpg,"Synthetic question","Keep original");
@@ -88,6 +89,7 @@ public final class NativeChecks extends Instrumentation {
             learningPolish((MainActivity)activity);
             libraryFormulaCards((MainActivity)activity);
             registrationUi((MainActivity)activity);sessionUi((MainActivity)activity);
+            new LearningChecks(this).ui((MainActivity)activity);
             emptyProductUi((MainActivity)activity);
             notebookChecks.ui(activity);
             result.putString("stream","PASS: "+passed+" Android independent notebook, sync, backup, recognition, formulas, learning and legacy queue assertions\n");
@@ -161,8 +163,15 @@ public final class NativeChecks extends Instrumentation {
         CloudApi session=challenge.signup(challenge.email,"new_user","Password123!","123456","device");check(session.uid.equals("NEW_USER")&&session.username.equals("new_user")&&session.bearer().equals("memory-only"),"registered account reuses normal sync session");session.close();
         check(paths.equals(Arrays.asList("/auth/v1/verification","/auth/v1/verification/verify","/auth/v1/signup"))&&bodies.get(0).getString("target").equals("ANY")&&bodies.get(1).getString("verification_id").equals("email-bound")&&bodies.get(2).getString("verification_token").equals("verified-email")&&bodies.get(2).getString("username").equals("new_user"),"send verify signup protocol preserves verified identity");
         failed=false;try{challenge.signup(challenge.email,"new_user","Password123!","123456","device");}catch(IOException e){failed=true;}check(failed&&paths.size()==3,"consumed verification cannot repeat signup");
-        for(String[] invalid:new String[][]{{"bad-email","new_user","Password123!"},{"test@example.com","ab","Password123!"},{"test@example.com","new_user","password"}}){failed=false;try{CloudApi.registrationFields(invalid[0],invalid[1],invalid[2]);}catch(IOException e){failed=true;}check(failed,"registration validates untrusted fields");}
+        for(String[] invalid:new String[][]{{"bad-email","new_user","Password123!"},{"test@example.com","ab","Password123!"},{"test@example.com","new_user","password"},{"test@example.com","tes_3","Password123!"},{"test@example.com","Tes_03","Password123!"},{"test@example.com","1test_","Password123!"},{"test@example.com","tes_0A","Password123!"},{"test@example.com","_tes_3","Password123!"},{"test@example.com","abcdefghijklmnopqrstuvwxyz","Password123!"}}){failed=false;try{CloudApi.registrationFields(invalid[0],invalid[1],invalid[2]);}catch(IOException e){failed=true;}check(failed,"registration validates untrusted fields");}
+        for(String name:new String[]{"tes_03","abcdefghijklmnopqrstuvwxy"})check(CloudApi.registrationFields("test@example.com",name,"Password123!").equals("test@example.com"),"registration accepts live username boundary: "+name.length());
         for(String error:new String[]{"rate_limit_exceeded","captcha_required","unimplemented","username_exists","invalid_verification_code"}){JSONObject response=new JSONObject().put("error",error).put("error_description","SECRET_PASSWORD");failed=false;try{CloudApi.sendRegistrationCode("test@example.com","device",(p,m,b,type,t,d,l)->new CloudApi.Reply(400,response.toString().getBytes(StandardCharsets.UTF_8)));}catch(IOException e){failed=!e.getMessage().contains("SECRET");}check(failed,"registration error stays safe: "+error);}
+        for(String path:new String[]{"verification/verify","signup"})for(int status:new int[]{200,400}){
+            JSONObject response=new JSONObject().put("error","invalid_argument").put("error_code",3).put("error_description","SECRET_PASSWORD SECRET_CODE");int[] calls={0};failed=false;
+            try{CloudApi.auth(path,new JSONObject(),"device",(p,m,b,type,t,d,l)->{calls[0]++;return new CloudApi.Reply(status,response.toString().getBytes(StandardCharsets.UTF_8));});}
+            catch(IOException e){failed=e.getMessage().contains(path.equals("verification/verify")?"邮箱验证码校验未通过":"账号信息未通过云端校验")&&!e.getMessage().contains("SECRET");}
+            check(failed&&calls[0]==1,"parameter rejection identifies request phase without secrets or retry: "+path+" "+status);
+        }
         CloudApi.EmailChallenge expired=new CloudApi.EmailChallenge("test@example.com",new JSONObject().put("verification_id","expired").put("expires_in",1),transport);Thread.sleep(1100);failed=false;try{expired.signup(expired.email,"new_user","Password123!","123456","device");}catch(IOException e){failed=true;}check(failed&&paths.size()==3,"expired verification never reaches network");
     }
     void registrationUi(MainActivity main) throws Exception {

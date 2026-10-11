@@ -97,7 +97,7 @@ class CloudSignInDialog(QDialog):
             self.form.setRowVisible(field, enabled)
         self.setWindowTitle('Flandre · 注册账号' if enabled else 'Flandre · 登录账号题库')
         self.hint.setText('验证邮箱后创建账号，手机和电脑使用同一用户名登录。\n'
-            '用户名 5～24 位字母、数字、_ 或 -；密码 8～32 位，含字母和数字。' if enabled else
+            '用户名 6～25 位，以小写字母开头，仅含小写字母、数字、_ 或 -。\n密码 8～32 位，含字母和数字。' if enabled else
             '登录后打开此账号独立的题库和图片目录。\n本地题库可继续使用，导入和云同步都有独立入口。')
         self.login_button.setText('注册并打开题库' if enabled else '登录并打开题库')
         self.switch_button.setText('已有账号？返回登录' if enabled else '没有账号？注册新账号')
@@ -222,8 +222,8 @@ class CloudAccountDialog(QDialog):
         self.heading.setTextFormat(Qt.TextFormat.PlainText)
         layout.addWidget(self.heading)
         hint = QLabel('登录后在当前窗口切换题库。本机题库保留，登录不会自动上传。' if session is None else
-                      '同步题目、笔记、掌握状态和原图。断网时继续本地保存，恢复网络后可手动同步。\n'
-                      '单词、逐次练习历史和编辑草稿保存在此账号的本机目录。')
+                      '题目、原图、单词本和作答历史在打开、关闭时自动同步，也可手动同步。\n'
+                      '断网保留待传内容，下次打开重试；编辑草稿继续保存在本机。')
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.status = QLabel()
@@ -270,11 +270,11 @@ class CloudAccountDialog(QDialog):
             self.status.setText('当前内容只保存在本地。点击“登录／注册账号”打开账号题库。')
             return
         state = self.local().status()
-        self.status.setText(f"待同步：{state['pending']} 道题 · 待处理冲突：{state['conflicts']} 道题\n"
+        self.status.setText(f"待同步：{state['pending']} 项 · 待处理冲突：{state['conflicts']} 项\n"
                             f"最近完成同步：{state['last_success'] or '尚未同步'}")
 
     def run(self, function, callback):
-        if self.worker is not None:
+        if self.worker is not None or self.window._auto_sync_worker is not None:
             return
         for control in self.controls:
             control.setEnabled(False)
@@ -317,6 +317,9 @@ class CloudAccountDialog(QDialog):
         self.window.refresh()
 
     def _ready_for_changes(self):
+        if self.window._auto_sync_worker is not None:
+            self.details.setText('自动同步正在进行，请结束后再操作。')
+            return False
         if not self.window._save_workspaces():
             self.details.setText('个人笔记尚未保存，请修正后重试。')
             return False
@@ -336,7 +339,7 @@ class CloudAccountDialog(QDialog):
             self.refresh()
             self.details.setText(f"本轮已上传 {result['uploaded']} 项，接收 {result['downloaded']} 项变化。" +
                 ('仍有同步冲突，请点击“处理同步冲突”。' if result['conflicts'] else
-                 '仍有待同步修改，请再次同步。' if result['pending'] else '当前题目与原图已同步。') +
+                 '仍有待同步修改，请再次同步。' if result['pending'] else '题目、原图、单词和作答历史已同步。') +
                 ('旧编辑草稿已保存副本，可在“处理同步冲突”中查看副本目录。' if result['archived_drafts'] else ''))
         self.run(lambda: synchronize(local, client), completed)
 
@@ -352,6 +355,9 @@ class CloudAccountDialog(QDialog):
                 self.details.setText(self.window.statusBar().currentMessage())
 
     def renew(self):
+        if self.worker is not None or self.window._auto_sync_worker is not None:
+            self.details.setText('同步正在进行，请结束后再重新登录。')
+            return
         dialog = CloudSignInDialog(self, self.window.cloud_session.username, self.window.cloud_session.user_id)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
@@ -379,14 +385,14 @@ class CloudAccountDialog(QDialog):
             return
         with closing(sqlite3.connect(source.resolve().joinpath('questions.db').as_uri() + '?mode=ro', uri=True)) as db:
             count = db.execute('SELECT count(*) FROM questions').fetchone()[0]
-        if QMessageBox.question(self, '导入本地题库', f'将原本地题库的 {count} 道题、原图和掌握状态复制到当前账号。\n'
+        if QMessageBox.question(self, '导入本地题库', f'将原本地题库的 {count} 道题、原图、单词和作答历史复制到当前账号。\n'
                 '导入前保存完整本地备份，原题库继续保留；同一来源已导入的题目会跳过。\n'
                 '导入后点击“立即同步”上传到当前账号，继续导入吗？') != QMessageBox.StandardButton.Yes:
             return
         local = self.local()
         def completed(result):
             self.refresh()
-            self.details.setText(f"已导入 {result['imported']} 道题。原题库保留，备份位置：{result['backup']}\n点击立即同步上传。")
+            self.details.setText(f"已导入 {result['imported']} 道题、{result['words']} 个单词、{result['history']} 条作答记录。原题库保留，备份位置：{result['backup']}\n点击立即同步上传。")
         self.run(lambda: local.import_guest(source), completed)
 
     def conflicts(self):
@@ -439,17 +445,33 @@ class ConflictDialog(QDialog):
         self.list.clear()
         for row in self.rows:
             self.list.addItem(row['stem'] or '本地已删除的题目')
+        self.keep_button.setEnabled(bool(self.rows))
+        self.cloud_button.setEnabled(bool(self.rows))
         if self.rows:
             self.list.setCurrentRow(0)
         else:
             self.preview.setPlainText('没有待处理冲突。')
-        self.keep_button.setEnabled(bool(self.rows))
-        self.cloud_button.setEnabled(bool(self.rows))
 
     def selected(self, index):
         if index < 0 or index >= len(self.rows):
             return
         row = self.rows[index]
+        self.keep_button.setEnabled(True)
+        if 'kind' in row:
+            labels = {'word':'单词','meaning':'释义','phonetic':'音标','example':'例句','book':'单词本',
+                      'mastery':'掌握程度','review_count':'复习次数','streak':'连续掌握次数',
+                      'due_at':'下次复习','last_reviewed_at':'上次复习','question_stem':'题干',
+                      'question_subject':'学科','answered_at':'作答时间','user_answer':'我的答案',
+                      'result':'作答结果','duration_seconds':'用时（秒）','mistake_reason':'错误原因'}
+            values = {'unknown':'未掌握','unsure':'不确定','mastered':'已掌握',
+                      'correct':'答对','incorrect':'答错','skipped':'跳过'}
+            def describe(payload):
+                return '\n'.join(f"{label}：{values.get(payload[key], payload[key]) if payload[key] is not None else '暂无'}"
+                                 for key,label in labels.items() if key in payload) or '已删除'
+            self.preview.setPlainText('本地：\n' + describe(row['local_payload']) +
+                                      '\n\n云端：\n' + describe(json.loads(row['conflict'])['payload']))
+            self.keep_button.setEnabled(row['kind'] == 'word')
+            return
         with self.local.connection() as db:
             question = db.execute('SELECT * FROM questions WHERE id=?', (row['local_id'],)).fetchone()
         remote = json.loads(row['conflict'])

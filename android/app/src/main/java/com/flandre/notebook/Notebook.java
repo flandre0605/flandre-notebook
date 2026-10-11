@@ -29,7 +29,7 @@ final class Notebook implements Closeable {
             db.execSQL("CREATE TABLE IF NOT EXISTS state(key TEXT PRIMARY KEY,value TEXT)");
             db.execSQL("CREATE TABLE IF NOT EXISTS imports(source_id TEXT PRIMARY KEY,target_id TEXT)");
             String bound=state("owner",user);if(!bound.equals(user))throw new IOException("题库属于其他账号。");
-            putState("owner",user);db.setTransactionSuccessful();
+            putState("owner",user);LearningSync.install(this);db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
     public synchronized void close(){db.close();}
@@ -110,7 +110,7 @@ final class Notebook implements Closeable {
             JSONObject e=entry(key);if(e==null||e.getInt("deleted")!=0)throw new IOException("题目已删除，未记录练习。");JSONObject p=e.getJSONObject("payload"),previous=p.optJSONObject("review");
             JSONObject r=new JSONObject().put("mastery",mastery).put("due_at",due(days)).put("last_reviewed_at",now()).put("review_count",previous==null?1:previous.getLong("review_count")+1);
             p.put("review",r);p.getJSONObject("question").put("is_wrong",markWrong?1:0);
-            db.execSQL("INSERT INTO attempts VALUES(?,?,?,?,?,?)",new Object[]{id(attemptId),id(key),now(),answer,correct?1:0,mastery});mutate(id(key),p,false);if(next!=null)putState("practice",next.toString());db.setTransactionSuccessful();
+            JSONObject q=p.getJSONObject("question");db.execSQL("INSERT INTO attempts(id,question_id,time,answer,correct,mastery,question_stem,question_subject,result) VALUES(?,?,?,?,?,?,?,?,?)",new Object[]{id(attemptId),id(key),now(),answer,correct?1:0,mastery,q.optString("stem"),q.optString("subject"),correct?"correct":"incorrect"});mutate(id(key),p,false);if(next!=null)putState("practice",next.toString());db.setTransactionSuccessful();
         }finally{db.endTransaction();}
     }
     synchronized JSONArray history(String key) throws Exception {JSONArray a=new JSONArray();try(Cursor c=db.rawQuery("SELECT * FROM attempts WHERE question_id=? ORDER BY time DESC,rowid DESC LIMIT 100",new String[]{id(key)})){while(c.moveToNext())a.put(row(c));}return a;}
@@ -188,11 +188,12 @@ final class Notebook implements Closeable {
         }finally{db.endTransaction();}
     }
     synchronized void word(String id,String word,String meaning,String phonetic,String example) throws Exception {
-        if(word.trim().isEmpty()||word.length()>300||meaning.length()>2000||phonetic.length()>300||example.length()>4000)throw new IOException("单词为空或文本过长。");
+        if(word.trim().isEmpty()||word.length()>300||meaning.length()>4000||phonetic.length()>300||example.length()>4000)throw new IOException("单词为空或文本过长。");
         if(id==null){try(Cursor c=db.rawQuery("SELECT id FROM words WHERE lower(word)=lower(?)",new String[]{word.trim()})){if(c.moveToFirst())id=c.getString(0);}}
-        if(id==null)id=CloudApi.id();db.beginTransaction();try{db.execSQL("INSERT OR IGNORE INTO words VALUES(?,?,?,?,?,'unknown',?)",new Object[]{id,word.trim(),meaning,phonetic,example,now()});db.execSQL("UPDATE words SET word=?,meaning=?,phonetic=?,example=? WHERE id=?",new Object[]{word.trim(),meaning,phonetic,example,id});db.setTransactionSuccessful();}finally{db.endTransaction();}
+        if(id!=null){try(Cursor c=db.rawQuery("SELECT 1 FROM words WHERE lower(word)=lower(?) AND id<>?",new String[]{word.trim(),id})){if(c.moveToFirst())throw new IOException("该单词已存在，请编辑已有词条。");}}
+        if(id==null)id=CloudApi.id();db.beginTransaction();try{db.execSQL("INSERT OR IGNORE INTO words(id,word,meaning,phonetic,example,mastery,due_at) VALUES(?,?,?,?,?,'unknown',?)",new Object[]{id,word.trim(),meaning,phonetic,example,now()});db.execSQL("UPDATE words SET word=?,meaning=?,phonetic=?,example=? WHERE id=?",new Object[]{word.trim(),meaning,phonetic,example,id});db.setTransactionSuccessful();}finally{db.endTransaction();}
     }
     synchronized JSONArray words() throws Exception {JSONArray a=new JSONArray();try(Cursor c=db.rawQuery("SELECT * FROM words ORDER BY due_at,rowid",null)){while(c.moveToNext())a.put(row(c));}return a;}
-    synchronized void reviewWord(String id,String mastery,int days){db.execSQL("UPDATE words SET mastery=?,due_at=? WHERE id=?",new Object[]{mastery,due(days),id});}
+    synchronized void reviewWord(String id,String mastery,int days){if(!Arrays.asList("unknown","unsure","mastered").contains(mastery))throw new IllegalArgumentException("掌握程度无效。");db.execSQL("UPDATE words SET mastery=?,due_at=?,last_reviewed_at=?,review_count=review_count+1,streak=CASE WHEN ?='mastered' THEN streak+1 ELSE 0 END WHERE id=?",new Object[]{mastery,due(days),now(),mastery,id});}
     synchronized void deleteWord(String id){db.delete("words","id=?",new String[]{id});}
 }

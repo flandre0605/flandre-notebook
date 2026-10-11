@@ -22,8 +22,23 @@ from app.services.cloud_accounts import account_directory
 class Backend:
     def __init__(self):
         self.rows, self.operations, self.sequences, self.images = {}, {}, {}, {}
+        self.learning_rows, self.learning_operations, self.learning_sequences = {}, {}, {}
 
     def rpc(self, user, name, arguments):
+        if name.startswith('flandre_learning_'):
+            rows, operations, sequences = self.rows, self.operations, self.sequences
+            self.rows, self.operations, self.sequences = self.learning_rows, self.learning_operations, self.learning_sequences
+            try:
+                if name.endswith('_pull'):
+                    return self.rpc(user, 'flandre_sync_pull', arguments)
+                result = self.rpc(user, 'flandre_sync_push', arguments)
+                if result.get('record'):
+                    result['record']['kind'] = arguments['p_kind']
+                    self.rows[arguments['p_id']]['kind'] = arguments['p_kind']
+                    self.operations[(user,arguments['p_operation_id'])] = (copy.deepcopy(arguments),copy.deepcopy(result))
+                return result
+            finally:
+                self.rows, self.operations, self.sequences = rows, operations, sequences
         if name == 'flandre_sync_pull':
             rows = sorted((copy.deepcopy(row) for row in self.rows.values() if row['user_id'] == user and row['seq'] > arguments['p_after']),
                           key=lambda row: row['seq'])[:arguments['p_limit']]
@@ -135,7 +150,7 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT mastery FROM review_state').fetchone()[0], 'mastered')
             image = db.execute('SELECT relative_path FROM attachments').fetchone()[0]
             self.assertEqual((self.other / image).read_bytes(), self.original.read_bytes())
-            self.assertEqual(db.execute('SELECT count(*) FROM practice_attempts').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT count(*) FROM practice_attempts').fetchone()[0], 1)
         self.assertEqual(self.local.status()['pending'], 0)
         with self.active(self.other):
             store.save_question_notes(self.row(self.other)['id'], 'Edited on another device')

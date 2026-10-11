@@ -9,19 +9,43 @@ import urllib.error
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.services.cloudbase_login import (LoginCheckError, _NoRedirect, validate_login,
-    send_registration_code, registration_fields)
+    send_registration_code, registration_fields, _auth_request)
 
 
 class LoginCheckTests(unittest.TestCase):
+    def test_registration_username_matches_live_signup_limits(self):
+        for username in ("tes_03", "abcdefghijklmnopqrstuvwxy"):
+            self.assertEqual(registration_fields("test@example.com", username, "Password123!"), "test@example.com")
+        for username in ("tes_3", "Tes_03", "1test_", "tes_0A", "_tes_3", "abcdefghijklmnopqrstuvwxyz"):
+            with self.subTest(username=username), self.assertRaises(LoginCheckError):
+                registration_fields("test@example.com", username, "Password123!")
+
+    def test_parameter_error_identifies_verification_without_exposing_secrets_or_retry(self):
+        body = json.dumps(dict(error="invalid_argument", error_code=3,
+                               error_description="SECRET_PASSWORD SECRET_CODE")).encode()
+        for path, expected in (("verification/verify", "邮箱验证码校验未通过"),
+                               ("signup", "账号信息未通过云端校验")):
+            for status in (200, 400):
+                with self.subTest(path=path, status=status), patch("app.services.cloudbase_login.urllib.request.build_opener") as build:
+                    if status == 200:
+                        build.return_value.open.return_value = BytesIO(body)
+                    else:
+                        build.return_value.open.side_effect = urllib.error.HTTPError("https://test", status, "failure", {}, BytesIO(body))
+                    with self.assertRaises(LoginCheckError) as raised:
+                        _auth_request("test-env", path, {}, "device")
+                    self.assertIn(expected, str(raised.exception))
+                    self.assertNotIn("SECRET", str(raised.exception))
+                    build.return_value.open.assert_called_once()
+
     def test_login_uses_fixed_https_host_and_returns_no_credentials(self):
         payload = dict(token_type="Bearer", access_token="SECRET_ACCESS",
                        refresh_token="SECRET_REFRESH", expires_in=7200, sub="12345")
         with patch("app.services.cloudbase_login.urllib.request.build_opener") as build:
             build.return_value.open.return_value = BytesIO(json.dumps(payload).encode())
-            result = validate_login("test-env", " test_a ", "SECRET_PASSWORD", "stable-device")
+            result = validate_login("test-env", " tes_1 ", "SECRET_PASSWORD", "stable-device")
             request = build.return_value.open.call_args.args[0]
             self.assertEqual(request.full_url, "https://test-env.api.tcloudbasegateway.com/auth/v1/signin")
-            self.assertEqual(json.loads(request.data), {"username": "test_a", "password": "SECRET_PASSWORD"})
+            self.assertEqual(json.loads(request.data), {"username": "tes_1", "password": "SECRET_PASSWORD"})
             self.assertEqual(request.get_header("X-device-id"), "stable-device")
             self.assertEqual(result, {"user_id": "12345", "expires_in": 7200})
             self.assertNotIn("SECRET", str(result))
@@ -81,6 +105,7 @@ class LoginCheckTests(unittest.TestCase):
             challenge = send_registration_code('test-env', 'test@example.com', 'device')
             for email, name, password, code in [('other@example.com','new_user','Password123!','123456'),
                 (challenge.email,'x','Password123!','123456'), (challenge.email,'new_user','short','123456'),
+                (challenge.email,'tes_3','Password123!','123456'),
                 (challenge.email,'new_user','Password123!','abc123')]:
                 with self.assertRaises(LoginCheckError):
                     challenge.signup('test-env', email, name, password, code, 'device')

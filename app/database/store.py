@@ -8,7 +8,7 @@ from app.paths import DATA_DIR
 
 
 DATABASE_PATH = DATA_DIR / "questions.db"
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 @contextmanager
@@ -205,6 +205,12 @@ def initialize(database_path: Path | None = None) -> None:
             connection.execute("""CREATE TABLE mobile_inbox_drafts (
                 key TEXT PRIMARY KEY, inbox_id TEXT NOT NULL REFERENCES mobile_inbox(id) ON DELETE CASCADE)""")
             connection.execute("PRAGMA user_version = 12")
+        if version < 13:
+            if not connection.in_transaction:
+                connection.execute("BEGIN IMMEDIATE")
+            from app.database.learning_sync_schema import install as install_learning
+            install_learning(connection)
+            connection.execute("PRAGMA user_version = 13")
 
 
 def _question_conditions(
@@ -527,10 +533,11 @@ def list_attempts(limit: int = 500) -> list[sqlite3.Row]:
     with _connection() as connection:
         return connection.execute(
             """SELECT a.answered_at, a.result, a.duration_seconds, a.mistake_reason,
-                      a.mastery, a.user_answer, q.stem, q.subject
+                      a.mastery, a.user_answer, COALESCE(q.stem,a.question_stem) AS stem,
+                      COALESCE(q.subject,a.question_subject) AS subject
                FROM practice_attempts a
-               JOIN questions q ON q.id = a.question_id
-               ORDER BY a.id DESC LIMIT ?""",
+               LEFT JOIN questions q ON q.id = a.question_id
+               ORDER BY a.answered_at DESC, a.id DESC LIMIT ?""",
             (max(1, min(limit, 2000)),),
         ).fetchall()
 
@@ -547,13 +554,13 @@ def learning_statistics() -> dict:
                FROM practice_attempts"""
         ).fetchone())
         subjects = [dict(row) for row in connection.execute(
-            """SELECT q.subject, COUNT(*) AS attempts,
+            """SELECT COALESCE(q.subject,a.question_subject) AS subject, COUNT(*) AS attempts,
                       SUM(a.result = 'correct') AS correct,
                       SUM(a.result = 'incorrect') AS incorrect,
                       SUM(a.result = 'skipped') AS skipped,
                       SUM(a.duration_seconds) AS seconds
-               FROM practice_attempts a JOIN questions q ON q.id = a.question_id
-               GROUP BY q.subject ORDER BY q.subject"""
+               FROM practice_attempts a LEFT JOIN questions q ON q.id = a.question_id
+               GROUP BY COALESCE(q.subject,a.question_subject) ORDER BY subject"""
         )]
         daily = [dict(row) for row in connection.execute(
             """SELECT date(answered_at, 'localtime') AS day, COUNT(*) AS attempts,

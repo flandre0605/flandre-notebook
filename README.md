@@ -1,18 +1,20 @@
 # Flandre Notebook · AI 错题本
 
-最新发布：Windows **0.4.0-preview.20** / Android **0.2.0-preview.10**（2026-10-11）。修复备份覆盖、模型跳转、JSON/CSV 互通和桌宠打开流程，批量识题共享原图；电脑包含托盘与内置 DeepSeek 服务。首次使用为空题库，已有题库保留。
+最新发布：Windows **0.4.0-preview.22** / Android **0.2.0-preview.12**（2026-10-11）。新增单词本、复习进度和作答历史跨端同步，打开、关闭时自动同步并保留手动入口；电脑包含托盘与内置 DeepSeek 服务。首次使用为空题库，已有题库保留。
 
-下载：[Windows 免安装 ZIP](https://github.com/flandre0605/flandre-notebook/releases/tag/v0.4.0-preview.20) · [Android APK](https://github.com/flandre0605/flandre-notebook/releases/tag/android-v0.2.0-preview.10)。每个发布页附中文使用说明和 SHA-256 校验文件。真实收信、新账号双端登录和手机云端闭环仍需实机验收；配置见 [账号注册配置](账号注册配置.md)。
+下载：[Windows 免安装 ZIP](https://github.com/flandre0605/flandre-notebook/releases/tag/v0.4.0-preview.22) · [Android APK](https://github.com/flandre0605/flandre-notebook/releases/tag/android-v0.2.0-preview.12)。每个发布页附中文使用说明和 SHA-256 校验文件。用户已确认电脑注册成功；新账号双端登录和手机云端闭环仍需实机验收；配置见 [账号注册配置](账号注册配置.md)。
 
 手机现已增加 DeepSeek 网页版本机接入，支持官方网页手动登录或填写自己的网页 Token；识题和单词补全不依赖电脑或额外反代服务，凭据加密并独立于账号同步。真实网页登录与图片识别尚待验收，操作见 [安卓说明](android/README.md)。
 
 以本地学习为基础的错题本，电脑与手机共用浅灰背景、白色内容卡片、深色学习首页与玫瑰色操作。收集题目、安排练习，也可以学习英语单词。
 
-面向纸质刷题：手机和电脑各自支持整理错题与学习，账号用于共享私有题库。电脑正式题目及图片同步已获用户确认；CloudBase 上海 004、005 已部署，手机正式云端写回、待整理双账号权限与实机流程仍需验收。预算仍待确定。
+面向纸质刷题：手机和电脑各自支持整理错题与学习，账号用于共享私有题库。电脑正式题目及图片同步已获用户确认；CloudBase 上海 004、005、006 已部署，手机正式云端写回、待整理双账号权限与实机流程仍需验收。预算仍待确定。
 
-Android 可独立使用：本机题库、手机识题/核对、公式、练习/复习、单词、JSON/CSV、打印与备份均已接入，登录用于云端同步。单词和详细作答历史暂存手机本地；手机和电脑分别下载对应发布包，最新范围见 [安卓说明](android/README.md)。
+Android 可独立使用：本机题库、手机识题/核对、公式、练习/复习、单词、JSON/CSV、打印与备份均已接入，登录用于云端同步。单词与详细作答历史随账号自动同步；手机和电脑分别下载对应发布包，最新范围见 [安卓说明](android/README.md)。
 
 ![空题库学习首页](assets/screenshots/desktop-home-empty.png)
+
+单词本、历史和自动同步的范围及验收见 [对应文档](云端学习数据与自动同步.md)。手机进入后台会尝试上传，系统强制结束时下次打开补传。
 
 ## 当前预览版功能
 
@@ -42,7 +44,7 @@ Android 可独立使用：本机题库、手机识题/核对、公式、练习/�
 
 ## 在 Windows 上运行
 
-下载 Windows `0.4.0-preview.20` 免安装 ZIP（约 104.2 MiB），完整解压后运行 `FlandreNotebook/FlandreNotebook.exe`，无需 Python。安卓下载 `0.2.0-preview.10` APK（约 2.1 MiB）覆盖安装；同签名保留已有题库，无需卸载。旧发布页保留历史版本，升级步骤见 [Windows 构建与交付](Windows构建与交付.md) 和 [安卓说明](android/README.md)。
+下载 Windows `0.4.0-preview.22` 免安装 ZIP（约 104.2 MiB），完整解压后运行 `FlandreNotebook/FlandreNotebook.exe`，无需 Python。安卓下载 `0.2.0-preview.12` APK（约 2.1 MiB）覆盖安装；同签名保留已有题库，无需卸载。旧发布页保留历史版本，升级步骤见 [Windows 构建与交付](Windows构建与交付.md) 和 [安卓说明](android/README.md)。
 
 Windows 新免安装包包含个人笔记直接编辑、桌宠表情、热力图、识题文字恢复、账号同步和手机待整理，并已用实际 EXE 通过独立临时目录运行检查。完整状态见 [功能完成与验收](功能完成与验收.md)。
 

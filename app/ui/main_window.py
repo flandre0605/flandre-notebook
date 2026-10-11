@@ -290,6 +290,13 @@ class MainWindow(QMainWindow):
     def __init__(self, cloud_session=None, cloud_root=None, cloud_lock=None):
         super().__init__()
         self.cloud_lock = cloud_lock
+        self._auto_sync_worker = None
+        self._close_after_sync = False
+        self._close_synced = False
+        self._auto_sync_timer = QTimer(self)
+        self._auto_sync_timer.setSingleShot(True)
+        self._auto_sync_timer.setInterval(2000)
+        self._auto_sync_timer.timeout.connect(self._automatic_sync)
         self.resize(1280, 820)
         self._build_workspace(cloud_session, cloud_root)
         self._exit_requested = False
@@ -321,6 +328,8 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+        if self.cloud_session:
+            self._auto_sync_timer.start(0)
 
     def _show_pet_from_tray(self):
         if "practice_run" not in self._page_dialogs:
@@ -339,7 +348,7 @@ class MainWindow(QMainWindow):
         self._exit_requested = True
         if self.close():
             QApplication.instance().quit()
-        else:
+        elif self._auto_sync_worker is None:
             self._exit_requested = False
             self._restore_from_tray()
 
@@ -431,7 +440,7 @@ class MainWindow(QMainWindow):
         local_layout.setContentsMargins(10, 10, 10, 0)
         local_title = QLabel(f"●  {cloud_session.username}" if cloud_session else "●  本地空间")
         local_title.setStyleSheet("color:#31815d;font-size:11px;font-weight:700;")
-        local_caption = QLabel("独立账号题库 · 可手动同步" if cloud_session else "题库数据保存在此设备")
+        local_caption = QLabel("打开、关闭时自动同步 · 支持手动同步" if cloud_session else "题库数据保存在此设备")
         local_caption.setWordWrap(True)
         local_caption.setObjectName("muted")
         local_layout.addWidget(local_title)
@@ -722,10 +731,66 @@ class MainWindow(QMainWindow):
         self._refresh_filter_options()
         self.refresh()
         self.show_home()
+        if cloud_session:
+            self._auto_sync_timer.start(0)
+
+    def _automatic_sync(self, closing=False):
+        if self.cloud_session is None:
+            return False
+        if self._auto_sync_worker is not None:
+            self._close_after_sync |= closing
+            return True
+        if self._has_running_tasks():
+            if not closing:
+                self._auto_sync_timer.start()
+            return False
+        if not self._save_workspaces():
+            self.statusBar().showMessage('本地内容尚未保存，自动同步已延后。', 10000)
+            return False
+        from PySide6.QtCore import QThreadPool
+        from app.ui.worker import Worker
+        from app.services.cloud_sync import CloudClient, ENVIRONMENT_ID, synchronize
+        from app.services.cloud_sync_store import SyncStore
+        local = SyncStore(self.cloud_directory, self.cloud_session.user_id, ENVIRONMENT_ID)
+        client = CloudClient(self.cloud_session)
+        # Open editors keep their own saved checkpoints; don't apply remote data underneath them.
+        pull = not ('question' in self._pages or 'practice_run' in self._pages or 'vocabulary' in self._pages)
+        self._close_after_sync = closing
+        self.centralWidget().setEnabled(False)
+        self.statusBar().showMessage('正在自动同步题库、单词和作答历史……本地数据已保存。')
+        self._auto_sync_worker = Worker(lambda: synchronize(local, client, pull=pull))
+        self._auto_sync_worker.signals.succeeded.connect(lambda result: self._automatic_sync_finished(result, None))
+        self._auto_sync_worker.signals.failed.connect(lambda error: self._automatic_sync_finished(None, error))
+        QThreadPool.globalInstance().start(self._auto_sync_worker)
+        return True
+
+    def _automatic_sync_finished(self, result, error):
+        self._auto_sync_worker.function = lambda: None
+        self._auto_sync_worker = None
+        self.centralWidget().setEnabled(True)
+        if error is None:
+            self._refresh_filter_options()
+            self.refresh()
+            if 'vocabulary' in self._pages:
+                self.vocabulary_page.refresh()
+            message = '自动同步完成。' + ('有冲突需在“账号与同步”中处理。' if result['conflicts'] else '')
+        else:
+            from app.services.cloud_sync import CloudSyncError
+            from app.services.cloudbase_login import LoginCheckError
+            message = str(error) if isinstance(error, (CloudSyncError, LoginCheckError, ValueError)) else '自动同步未完成，本地数据已保留，下次打开重试。'
+        self.statusBar().showMessage(message, 20000)
+        closing = self._close_after_sync
+        self._close_after_sync = False
+        if error is None and result['pending'] > result['conflicts']:
+            QTimer.singleShot(50, lambda: self._automatic_sync(closing))
+        elif closing:
+            self._close_synced = True
+            QTimer.singleShot(50, self.close)
 
     def _has_running_tasks(self):
         from PySide6.QtCore import QThreadPool
         busy = QThreadPool.globalInstance().activeThreadCount() > 0
+        busy |= self._auto_sync_worker is not None
         busy |= any(getattr(d, '_recognizing', False) for d in self._recognition_dialogs)
         busy |= 'vocabulary' in self._pages and self.vocabulary_page._translation_busy
         busy |= self._cloud_dialog is not None and (self._cloud_dialog.worker is not None or
@@ -1124,6 +1189,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         background = self._tray is not None and self._tray.isVisible() and not self._exit_requested
+        if self._auto_sync_worker is not None:
+            self._close_after_sync = True
+            event.ignore()
+            return
         if not background and self._has_running_tasks():
             self.statusBar().showMessage('识题、同步或模型请求正在进行，请结束后再退出。', 10000)
             event.ignore()
@@ -1132,6 +1201,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("草稿或笔记尚未保存，请修正输入或稍后重试；窗口和内容继续保留。", 10000)
             event.ignore()
             return
+        self._auto_sync_timer.stop()
+        if not self._close_synced and self._automatic_sync(closing=True):
+            event.ignore()
+            return
+        self._close_synced = False
         if background:
             if "vocabulary" in self._pages:
                 self.vocabulary_page.speech.stop()
@@ -1157,6 +1231,9 @@ class MainWindow(QMainWindow):
         if self._tray is not None:
             self._tray.hide()
         super().closeEvent(event)
+        if self._exit_requested:
+            from PySide6.QtWidgets import QApplication
+            QApplication.instance().quit()
 
     def refresh(self):
         try:

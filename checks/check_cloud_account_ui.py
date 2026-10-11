@@ -35,6 +35,7 @@ def child():
         assert attachments.ATTACHMENTS_DIR == backup.ATTACHMENTS_DIR == expected / 'attachments'
         assert not (guest / 'questions.db').exists()
         window = next(item for item in app.topLevelWidgets() if isinstance(item, MainWindow))
+        window._auto_sync_timer.stop()
         assert window.cloud_root == guest
         dialog = CloudAccountDialog(window)
         assert dialog.local().user_id == 'ui-check-user'
@@ -92,6 +93,14 @@ def child():
         signin.password.setText('Password123!')
         signin.confirm.setText('Password123!')
         signin.code.setText('123456')
+        signin.username.setText('tes_3')
+        with patch.object(challenge, 'signup') as signup:
+            signin.sign_in()
+            signup.assert_not_called()
+        assert '6～25' in signin.status.text() and signin.worker is None
+        assert signin.code.text() == '123456' and signin.password.text() == 'Password123!'
+        assert signin.challenge is challenge and challenge.identity == 'memory-only'
+        signin.username.setText('new_user')
         with patch.object(challenge, 'signup', return_value={'user_id':'new-user', 'access_token':'memory-only', 'expires_in':7200}) as signup:
             signin.sign_in()
             assert not signin.password.text() and not signin.confirm.text() and not signin.code.text()
@@ -189,7 +198,13 @@ def child():
     restored = '--restored-child' in sys.argv
     sys.argv = [str(Path(main.__file__))] if restored else [str(Path(main.__file__)), '--cloud', '--workspace-root', str(guest)]
     previous = CloudSession({'user_id':'ui-check-user', 'access_token':'', 'expires_in':0}, 'ui-test', 'device')
-    with patch.object(CloudSessionStore, 'load_last', return_value=previous) as load, patch.object(CloudSignInDialog, 'exec', login), patch.object(QApplication, 'exec', check_event_loop):
+    from PySide6.QtCore import QTimer
+    # This suite exercises workspace switching; automatic networking has its own isolated lifecycle suite.
+    start_timer = QTimer.start
+    def start(timer, *args):
+        if getattr(timer.parent(), '_auto_sync_timer', None) is not timer:
+            return start_timer(timer, *args)
+    with patch.object(QTimer, 'start', start), patch.object(CloudSessionStore, 'load_last', return_value=previous) as load, patch.object(CloudSignInDialog, 'exec', login), patch.object(QApplication, 'exec', check_event_loop):
         assert main.main() == 0
         if restored:
             load.assert_called_once();assert not prompted

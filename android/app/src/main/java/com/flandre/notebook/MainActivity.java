@@ -26,6 +26,7 @@ public final class MainActivity extends Activity {
     LinearLayout page;
     PhoneUi ui;
     boolean busy=false;
+    boolean autoSyncQueued=false;
     String location="home";
     long nextRegistrationCode=0;
     private String cameraName,cameraUid;
@@ -47,6 +48,21 @@ public final class MainActivity extends Activity {
         try {openWorkspace(getPreferences(0).getString("offline_uid","LOCAL"));screens=new NotebookScreens(this);home();restoreLogin();}catch(Exception e){screen("无法打开题库","请保留应用数据，不要卸载。可重新启动后再试。");}
     }
     void restoreLogin(){try{api=new CloudLoginStore(this).load(book.uid);}catch(IOException error){status(error.getMessage());}}
+    protected void onStart(){super.onStart();automaticSync(false);}
+    protected void onStop(){automaticSync(true);super.onStop();}
+    void automaticSync(boolean background){
+        if(api==null||book==null||!book.uid.equals(api.uid)||autoSyncQueued||executor.isShutdown())return;
+        final Notebook owner=book;final CloudApi client=api;final boolean ownsBusy=!busy;
+        final boolean pull=!background&&(location.equals("home")||location.equals("account"));
+        autoSyncQueued=true;busy=true;if(ownsBusy)status("正在自动同步题库、单词和作答历史……");
+        executor.execute(()->{
+            String message="";try{if(owner==book&&client==api){do{message=NotebookSync.synchronize(owner,client,pull);}while(NotebookSync.pending(owner)>0);}}
+            catch(Exception error){message=error instanceof IOException?error.getMessage():"自动同步未完成，本地内容已保存，下次打开重试。";owner.putState("sync_error",message);}
+            final String result=message;runOnUiThread(()->{autoSyncQueued=false;busy=false;if(isDestroyed()||isFinishing()||owner!=book||client!=api)return;
+                if(pull&&location.equals("home"))home();else if(pull&&location.equals("account"))screens.account();status(result);
+            });
+        });
+    }
     protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putString("camera_name",cameraName);out.putString("camera_uid",cameraUid);}
     int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
     void screen(String title,String hint){
@@ -62,7 +78,7 @@ public final class MainActivity extends Activity {
         executor.execute(()->{
             Object result=null;Exception error=null;try{result=job.run();}catch(Exception e){error=e;}
             final Object value=result;final Exception failure=error;
-            runOnUiThread(()->{busy=false;if(isDestroyed()||isFinishing())return;try{if(failure!=null){status(failure instanceof IOException?failure.getMessage():"未能完成处理，已保存的任务会保留，请重试。");}else done.accept(value);}catch(Exception e){status("未能显示结果，已保存的任务会保留。");}});
+            runOnUiThread(()->{busy=autoSyncQueued;if(isDestroyed()||isFinishing())return;try{if(failure!=null){status(failure instanceof IOException?failure.getMessage():"未能完成处理，已保存的任务会保留，请重试。");}else done.accept(value);}catch(Exception e){status("未能显示结果，已保存的任务会保留。");}});
         });
     }
     void loginPage(){
@@ -84,6 +100,7 @@ public final class MainActivity extends Activity {
         try{openWorkspace(signed.uid);}catch(Exception error){signed.close();throw new IOException("账号已认证，但题库未能打开。原本机题库保留，请重新登录。");}if(api!=null)api.close();api=signed;
         getPreferences(0).edit().putString("username",name).putString("offline_uid",api.uid).commit();
         api.store=new CloudLoginStore(this);home();try{api.store.save(api);}catch(IOException error){status(error.getMessage());}
+        new Handler(Looper.getMainLooper()).post(()->automaticSync(false));
     }
     void registerPage(){
         screens.page("注册账号","验证邮箱后，在手机和电脑使用同一用户名登录。",this::loginPage);location="registration";
@@ -98,7 +115,7 @@ public final class MainActivity extends Activity {
         // A monotonic cooldown also survives switching between login and registration pages.
         Handler timer=new Handler(Looper.getMainLooper());timer.postDelayed(new Runnable(){public void run(){if(isDestroyed()||!send.isAttachedToWindow())return;long remaining=nextRegistrationCode-SystemClock.elapsedRealtime();send.setText(remaining>0?((remaining+999)/1000)+" 秒后可重新发送":"发送邮箱验证码");timer.postDelayed(this,1000);}},100);
         text("邮箱验证码",14,true);EditText code=edit("邮件中的 6 位数字",false);code.setInputType(InputType.TYPE_CLASS_NUMBER);code.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(6)});code.setSaveEnabled(false);code.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);
-        text("用户名",14,true);EditText username=edit("5～24 位字母、数字、_ 或 -",false);username.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(24)});
+        text("用户名",14,true);EditText username=edit("6～25 位，小写字母开头，仅含小写字母、数字、_ 或 -",false);username.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(25)});
         text("密码",14,true);EditText password=edit("8～32 位，含字母和数字",true);
         text("确认密码",14,true);EditText confirm=edit("再次输入密码",true);
         primary("注册并进入题库",()->{

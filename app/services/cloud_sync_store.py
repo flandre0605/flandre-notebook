@@ -45,10 +45,12 @@ class SyncStore:
                 db.execute('INSERT INTO sync_state VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
 
     def status(self):
+        from app.services.learning_sync import LearningStore
         with self.connection() as db:
             counts = db.execute('SELECT sum(dirty),sum(conflict IS NOT NULL) FROM sync_entities').fetchone()
             state = dict(db.execute('SELECT key,value FROM sync_state'))
-        return {'pending': counts[0] or 0, 'conflicts': counts[1] or 0,
+        learning = LearningStore(self).status()
+        return {'pending': (counts[0] or 0) + learning['pending'], 'conflicts': (counts[1] or 0) + learning['conflicts'],
                 'last_success': state.get('last_success', ''), 'cursor': int(state.get('cursor', '0'))}
 
     def _file(self, relative):
@@ -264,11 +266,17 @@ class SyncStore:
         self.archived_drafts += 1
 
     def conflicts(self):
+        from app.services.learning_sync import LearningStore
         with self.connection() as db:
-            return [dict(row) for row in db.execute('SELECT e.*,q.stem FROM sync_entities e LEFT JOIN questions q ON q.id=e.local_id '
+            rows = [dict(row) for row in db.execute('SELECT e.*,q.stem FROM sync_entities e LEFT JOIN questions q ON q.id=e.local_id '
                                                    'WHERE e.conflict IS NOT NULL ORDER BY e.rowid')]
+        return rows + LearningStore(self).conflicts()
 
     def resolve(self, entity_id, keep_local, client):
+        from app.services.learning_sync import LearningStore
+        with self.connection() as db:
+            if db.execute('SELECT 1 FROM learning_entities WHERE id=?', (entity_id,)).fetchone():
+                return LearningStore(self).resolve(entity_id, keep_local)
         with self.connection() as db:
             row = db.execute('SELECT * FROM sync_entities WHERE id=? AND conflict IS NOT NULL', (entity_id,)).fetchone()
         if row is None:
@@ -343,6 +351,7 @@ class SyncStore:
         copied = []
         images = {}
         count = 0
+        word_count = history_count = 0
         try:
             with tempfile.TemporaryDirectory(prefix='flandre-import-') as temporary, zipfile.ZipFile(archive_path) as archive:
                 database = Path(temporary) / 'questions.db'
@@ -381,7 +390,31 @@ class SyncStore:
                         entity_id = db.execute('SELECT id FROM sync_entities WHERE local_id=?', (qid,)).fetchone()[0]
                         db.execute('INSERT INTO sync_imports VALUES(?,?,?)', (source_id, old['id'], entity_id))
                         count += 1
-            return {'imported': count, 'backup': str(archive_path)}
+                    from app.services.learning_sync import WORD_FIELDS, ATTEMPT_FIELDS
+                    for kind, table, fields in (('word','vocabulary_words',WORD_FIELDS), ('attempt','practice_attempts',ATTEMPT_FIELDS)):
+                        import_source = source_id + ':' + kind
+                        for old in source.execute(f'SELECT * FROM {table} ORDER BY id'):
+                            if db.execute('SELECT 1 FROM sync_imports WHERE source=? AND source_id=?', (import_source,old['id'])).fetchone():
+                                continue
+                            if kind == 'word':
+                                duplicate = db.execute('SELECT id FROM vocabulary_words WHERE word=? COLLATE NOCASE',(old['word'],)).fetchone()
+                                if duplicate:
+                                    local_id = duplicate[0]
+                                else:
+                                    local_id = db.execute(f"INSERT INTO vocabulary_words({','.join(fields)}) VALUES({','.join('?' for _ in fields)})",
+                                                          tuple(old[f] for f in fields)).lastrowid
+                                    word_count += 1
+                            else:
+                                link = db.execute('SELECT e.local_id,e.id FROM sync_imports i JOIN sync_entities e ON e.id=i.entity_id WHERE i.source=? AND i.source_id=?',
+                                                  (source_id,old['question_id'])).fetchone()
+                                values = dict(old)
+                                values['question_cloud_id'] = link['id'] if link else ''
+                                local_id = db.execute(f"INSERT INTO practice_attempts(question_id,{','.join(fields)}) VALUES({','.join('?' for _ in range(1+len(fields)))})",
+                                                      (link['local_id'] if link else None,*[values[f] for f in fields])).lastrowid
+                                history_count += 1
+                            entity = db.execute('SELECT id FROM learning_entities WHERE kind=? AND local_id=?',(kind,local_id)).fetchone()[0]
+                            db.execute('INSERT INTO sync_imports VALUES(?,?,?)',(import_source,old['id'],entity))
+            return {'imported': count, 'words':word_count, 'history':history_count, 'backup': str(archive_path)}
         except Exception:
             for file in copied:
                 file.unlink(missing_ok=True)

@@ -65,7 +65,7 @@ def _auth_request(environment_id, path, arguments, device_id):
         except (ValueError, UnicodeError):
             payload = None
         if isinstance(payload, dict) and payload.get("error"):
-            _auth_error(payload)
+            _auth_error(payload, path)
         raise LoginCheckError(f"账号请求未确认完成（HTTP {error.code}）。注册时请先尝试登录，避免重复提交。") from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise LoginCheckError("无法连接云端，请检查网络后手动重试。") from None
@@ -76,16 +76,18 @@ def _auth_request(environment_id, path, arguments, device_id):
         if not isinstance(payload, dict):
             raise ValueError("invalid response")
         if payload.get("error"):
-            _auth_error(payload)
+            _auth_error(payload, path)
         return payload
     except (ValueError, UnicodeError):
         raise LoginCheckError("云端返回的内容无法识别，尚未验证成功。") from None
 
 
-def _auth_error(payload):
+def _auth_error(payload, path):
     if payload.get('error') in ('invalid_grant', 'invalid_refresh_token', 'unauthenticated'):
         raise SessionExpired('登录已失效，请重新登录。本地题库和待同步修改已保留。')
     messages = {
+        "invalid_argument": ("邮箱验证码校验未通过，请使用当前窗口最新发送的验证码；仍失败请重新获取。"
+            if path == "verification/verify" else "账号信息未通过云端校验，请检查邮箱、用户名和密码。"),
         "invalid_verification_code": "验证码不正确，请检查后重试。",
         "verification_code_expired": "验证码已过期，请重新获取。",
         "verification_expired": "验证码已过期，请重新获取。",
@@ -144,8 +146,9 @@ def registration_fields(email, username=None, password=None):
     email = email.strip()
     if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
         raise LoginCheckError("请填写有效的邮箱地址。")
-    if username is not None and not re.fullmatch(r"[A-Za-z0-9_-]{5,24}", username):
-        raise LoginCheckError("用户名需为 5～24 位字母、数字、下划线或短横线。")
+    # The live signup validator counts 5–24 characters after the initial lowercase letter.
+    if username is not None and not re.fullmatch(r"[a-z][0-9a-z_-]{5,24}", username):
+        raise LoginCheckError("用户名需为 6～25 位，以小写字母开头，仅含小写字母、数字、下划线或短横线。")
     if password is not None and (not 8 <= len(password) <= 32
             or not re.search(r"[A-Za-z]", password) or not re.search(r"[0-9]", password)):
         raise LoginCheckError("密码需为 8～32 位，包含字母和数字。")

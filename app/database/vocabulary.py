@@ -114,9 +114,9 @@ def record_review(word_id, rating, session_state=None):
         # ponytail: 固定间隔 1/3/7/14/30 天；确有长期学习数据后再引入自适应算法。
         days = (1, 3, 7, 14, 30)[min(streak - 1, 4)] if streak else (1 if rating == "hard" else 0)
         connection.execute(
-            """UPDATE vocabulary_words SET review_count = review_count + 1, streak = ?,
+            """UPDATE vocabulary_words SET review_count = review_count + 1, streak = ?, mastery = ?,
                       last_reviewed_at = ?, due_at = ? WHERE id = ?""",
-            (streak, now.strftime("%Y-%m-%d %H:%M:%S"),
+            (streak, {'forgot':'unknown','hard':'unsure','known':'mastered'}[rating], now.strftime("%Y-%m-%d %H:%M:%S"),
              (now + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"), word_id),
         )
         if session_state is not None:

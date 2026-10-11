@@ -123,12 +123,12 @@ class CloudClient:
 
     def rpc(self, name, arguments):
         if name not in ('flandre_sync_push', 'flandre_sync_pull', 'flandre_inbox_submit',
-                        'flandre_inbox_pull', 'flandre_inbox_finish'):
+                        'flandre_inbox_pull', 'flandre_inbox_finish', 'flandre_learning_push', 'flandre_learning_pull'):
             raise CloudSyncError('同步接口无效。')
         status, content = self.request('/v1/rdb/rest/rpc/' + name, 'POST', json.dumps(arguments).encode('utf-8'))
         if status != 200:
             if status == 404:
-                raise CloudSyncError('同步服务暂不可用，请稍后重试。本地修改已保留。')
+                raise CloudSyncError('同步服务暂不可用。单词与历史同步需要部署 006_learning_sync.sql；本地修改已保留。')
             if status in (401, 403):
                 raise CloudSyncError('云端未授权本次操作。请重新登录并检查账号权限，本地数据已保留。')
             raise CloudSyncError(f'云端未完成同步（HTTP {status}）。请稍后重试，本地修改已保留。')
@@ -164,7 +164,7 @@ class CloudClient:
             raise CloudSyncError('云端图片内容校验不一致，未提交题目附件关联。')
 
 
-def synchronize(local, client):
+def synchronize(local, client, pull=True):
     uploaded, downloaded = 0, 0
     # Bound one run; unfinished changes remain visibly pending for another run.
     for _ in range(200):
@@ -194,6 +194,11 @@ def synchronize(local, client):
             raise CloudSyncError('云端确认内容与本轮操作不一致，未清除待同步操作。')
         local.acknowledge(pending, record)
         uploaded += 1
+    if not pull:
+        from app.services.learning_sync import synchronize_learning
+        learning = synchronize_learning(local, client, pull=False)
+        local.succeeded()
+        return dict(uploaded=uploaded + learning['uploaded'], downloaded=0, archived_drafts=0, **local.status())
     for _ in range(100):
         cursor = local.status()['cursor']
         page = client.rpc('flandre_sync_pull', {'p_after': cursor, 'p_limit': 10})
@@ -215,5 +220,9 @@ def synchronize(local, client):
             break
     else:
         raise CloudSyncError('本轮已接收 1000 条变化，请再次同步以接收后续内容。')
+    from app.services.learning_sync import synchronize_learning
+    learning = synchronize_learning(local, client)
+    uploaded += learning['uploaded']
+    downloaded += learning['downloaded']
     local.succeeded()
     return dict(uploaded=uploaded, downloaded=downloaded, archived_drafts=local.archived_drafts, **local.status())

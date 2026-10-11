@@ -51,6 +51,8 @@ def check():
         old = root / "v9.db"
         store.initialize(old)
         with connection(old) as db:
+            from legacy_learning_fixture import remove_learning_schema
+            remove_learning_schema(db)
             for name, in db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'sync_%'").fetchall():
                 db.execute(f'DROP TRIGGER "{name}"')
             for table in ('mobile_inbox_drafts', 'mobile_inbox', 'sync_outbox', 'sync_imports', 'sync_attachments', 'sync_entities', 'sync_state'):
@@ -68,6 +70,7 @@ def check():
         broken = root / "broken.db"
         store.initialize(broken)
         with connection(broken) as db:
+            remove_learning_schema(db)
             for name, in db.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'sync_%'").fetchall():
                 db.execute(f'DROP TRIGGER "{name}"')
             for table in ('mobile_inbox_drafts', 'mobile_inbox', 'sync_outbox', 'sync_imports', 'sync_attachments', 'sync_entities', 'sync_state'):

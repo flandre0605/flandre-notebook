@@ -71,6 +71,7 @@ final class CloudApi {
             String code=result.optString("error"),message;
             switch(code){
                 case "invalid_grant":case "invalid_refresh_token":case "unauthenticated":throw new LoginExpired();
+                case "invalid_argument":message=path.equals("verification/verify")?"邮箱验证码校验未通过，请使用当前窗口最新发送的验证码；仍失败请重新获取。":"账号信息未通过云端校验，请检查邮箱、用户名和密码。";break;
                 case "invalid_verification_code":message="验证码不正确，请检查后重试。";break;
                 case "verification_code_expired":case "verification_expired":case "invalid_verification_token":message="邮箱验证已失效，请重新获取验证码。";break;
                 case "email_already_exists":case "email_exists":message="此邮箱已注册，请返回登录。";break;
@@ -88,7 +89,7 @@ final class CloudApi {
     }
     static String registrationFields(String email,String name,String password) throws IOException {
         email=email.trim();if(email.length()>254||!email.matches("[^\\s@]+@[^\\s@]+\\.[^\\s@]+"))throw new IOException("请填写有效的邮箱地址。");
-        if(name!=null&&!name.matches("[A-Za-z0-9_-]{5,24}"))throw new IOException("用户名需为 5～24 位字母、数字、下划线或短横线。");
+        if(name!=null&&!name.matches("[a-z][0-9a-z_-]{5,24}"))throw new IOException("用户名需为 6～25 位，以小写字母开头，仅含小写字母、数字、下划线或短横线。");
         if(password!=null&&(password.length()<8||password.length()>32||!password.matches("(?s).*[A-Za-z].*")||!password.matches("(?s).*[0-9].*")))throw new IOException("密码需为 8～32 位，包含字母和数字。");return email;
     }
     static EmailChallenge sendRegistrationCode(String email,String device) throws Exception {return sendRegistrationCode(email,device,CloudApi::request);}
@@ -133,9 +134,9 @@ final class CloudApi {
         finally{c.disconnect();}
     }
     JSONObject rpc(String name,JSONObject args) throws Exception {
-        if(!Arrays.asList("flandre_inbox_submit","flandre_inbox_pull","flandre_sync_pull","flandre_sync_push").contains(name))throw new IOException("接口无效。");
+        if(!Arrays.asList("flandre_inbox_submit","flandre_inbox_pull","flandre_sync_pull","flandre_sync_push","flandre_learning_push","flandre_learning_pull").contains(name))throw new IOException("接口无效。");
         Reply r=authenticated("/v1/rdb/rest/rpc/"+name,"POST",args.toString().getBytes(StandardCharsets.UTF_8),"application/json",2*1024*1024);
-        if(r.code!=200)throw new IOException(r.code==404?"图片接收服务暂不可用，请稍后重试。":r.code==401||r.code==403?"请重新登录并检查此账号的权限。":"云端暂未完成操作，请重试（"+r.code+"）。");
+        if(r.code!=200)throw new IOException(r.code==404?"同步服务暂不可用；单词与历史需部署 006_learning_sync.sql，本机数据保留。":r.code==401||r.code==403?"请重新登录并检查此账号的权限。":"云端暂未完成操作，请重试（"+r.code+"）。");
         return new JSONObject(new String(r.body,StandardCharsets.UTF_8));
     }
     String objectPath(JSONObject image,String receipt) throws Exception {
