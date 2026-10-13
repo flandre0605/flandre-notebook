@@ -58,7 +58,7 @@ def build(compiler=None):
                     str(ROOT / "packaging" / "flandre.spec")], cwd=ROOT, env=env, check=True)
     bundle = output / "FlandreNotebook"
     shutil.copy2(ROOT / "packaging" / "使用说明.txt", bundle)
-    shutil.copy2(ROOT / "packaging" / "THIRD_PARTY_NOTICES.md", bundle)
+    shutil.copy2(ROOT / "packaging" / "THIRD_PARTY_NOTICES.txt", bundle)
     shutil.copytree(ROOT / "packaging" / "licenses", bundle / "licenses", dirs_exist_ok=True)
     shutil.copy2(Path(sys.base_prefix) / "LICENSE.txt", bundle / "licenses" / "PYTHON.txt")
     from ziafont import Font

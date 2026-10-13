@@ -7,3 +7,9 @@ dist/
 build/
 *.keystore
 *.jks
+.codex-document-work/
+assets/previews/
+assets/screenshots/
+android/docs/
+*.prompt.md
+*.prompts.md

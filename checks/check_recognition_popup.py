@@ -124,7 +124,7 @@ def check():
                 assert not any(key.startswith("recognition") for key in window._pages)
                 popup.reject()
                 assert not window._recognition_dialogs and len(store.list_questions()) == 2
-            markdown = (Path(__file__).parent / 'fixtures/recognition_limit_markdown.md').read_text(encoding='utf-8')
+            markdown = (Path(__file__).parent / 'fixtures/recognition_limit_markdown.txt').read_text(encoding='utf-8')
             with patch('app.ui.image_recognition_dialog.recognize_image', side_effect=ProviderError('旧格式响应', markdown)) as request:
                 popup = window.start_image_recognition(external, auto_recognize=True)
                 wait_until(lambda: '旧格式响应' in popup.status.text())

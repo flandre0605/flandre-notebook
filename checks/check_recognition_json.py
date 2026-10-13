@@ -20,7 +20,7 @@ def check():
     else:
         raise AssertionError("Accepted incomplete batch")
     malformed = r'{"questions":[{"stem":"$\lim_{x\to0}x$","answer":"0"}]}'
-    markdown = (Path(__file__).parent / 'fixtures/recognition_limit_markdown.md').read_text(encoding='utf-8')
+    markdown = (Path(__file__).parent / 'fixtures/recognition_limit_markdown.txt').read_text(encoding='utf-8')
     local = provider.parse_recognition_text(markdown)
     assert len(local) == 1 and local.raw_response == markdown
     assert r'\sqrt{x-a}' in local[0]['stem'] and r'\begin{cases}' in local[0]['answer']
